@@ -15,6 +15,7 @@ import {
 import heroVehiculoImg from '../assets/images/autofin_hero_vehiculo_1793257817332.jpg';
 import heroMotoImg from '../assets/images/autofin_hero_moto_1793262763387.jpg';
 import heroInmuebleImg from '../assets/images/autofin_inmueble_comercial_1793257817601.jpg';
+import { apiFetch } from '../lib/api-url';
 import {
   DEFAULT_ADVISOR_PHOTO_URL,
   OFFICIAL_OFFICE_ADDRESS,
@@ -181,7 +182,7 @@ export function PublicLeadForm({
                 source: 'Asesor CRM',
               }),
             })
-          : await fetch('/api/public/leads', {
+          : await apiFetch('/api/public/leads', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload),

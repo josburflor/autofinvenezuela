@@ -9,6 +9,7 @@ import {
   X,
 } from 'lucide-react';
 import type { AdvisorProfileDTO, LeadRecordDTO } from '../shared/types';
+import { apiFetch, websocketUrl } from '../lib/api-url';
 
 interface GeminiAdvisorPanelProps {
   open: boolean;
@@ -201,7 +202,7 @@ export function GeminiAdvisorPanel({
               leadContext: leadContextSummary,
             }),
           })
-        : await fetch('/api/public/gemini/chat', {
+        : await apiFetch('/api/public/gemini/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -246,11 +247,10 @@ export function GeminiAdvisorPanel({
       outputAudioCtxRef.current = outputCtx;
       nextStartTimeRef.current = outputCtx.currentTime;
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const query = leadContextSummary
         ? `?lead=${encodeURIComponent(leadContextSummary)}`
         : '';
-      const ws = new WebSocket(`${protocol}//${window.location.host}/live${query}`);
+      const ws = new WebSocket(websocketUrl(`/live${query}`));
       wsRef.current = ws;
 
       ws.onopen = () => {

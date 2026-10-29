@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
 import type { AdminUserDTO } from '../shared/types';
+import { apiFetch } from '../lib/api-url';
 
 interface AuthContextValue {
   user: AdminUserDTO | null;
@@ -10,6 +11,7 @@ interface AuthContextValue {
   signInWithCredentials: (identifier: string, password: string) => Promise<boolean>;
   signOutAdvisor: () => Promise<void>;
   authFetch: (input: string, init?: RequestInit) => Promise<Response>;
+  getAdminToken: () => string | null;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -21,6 +23,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Almacenamiento estrictamente en memoria (nunca en localStorage)
   const adminTokenRef = useRef<string | null>(null);
+  const getAdminToken = useCallback(() => adminTokenRef.current, []);
 
   const authFetch = useCallback(async (input: string, init: RequestInit = {}) => {
     const token = adminTokenRef.current;
@@ -33,7 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       headers.set('Content-Type', 'application/json');
     }
 
-    return fetch(input, {
+    return apiFetch(input, {
       ...init,
       headers,
     });
@@ -47,7 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async (identifier: string, password: string): Promise<boolean> => {
       setAuthError(null);
       try {
-        const res = await fetch('/api/auth/login', {
+        const res = await apiFetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ identifier, password }),
@@ -82,7 +85,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (activeToken) {
       try {
-        await fetch('/api/auth/logout', {
+        await apiFetch('/api/auth/logout', {
           method: 'POST',
           headers: { Authorization: `Bearer ${activeToken}` },
         });
@@ -107,6 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signInWithCredentials,
         signOutAdvisor,
         authFetch,
+        getAdminToken,
       }}
     >
       {children}
