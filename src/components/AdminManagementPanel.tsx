@@ -13,10 +13,20 @@ import {
   X,
 } from 'lucide-react';
 import type { AdminRole, AdminUserDTO, AdvisorProfileDTO } from '../shared/types';
+import { tryBackendJson } from '../lib/api-url';
+import { auth } from '../lib/firebase';
+import {
+  createFirestoreAdminByUid,
+  deleteFirestoreAdminAccount,
+  listFirestoreAdmins,
+  updateFirestoreAdminAccount,
+} from '../lib/firestore-crm';
 import { AdvisorProfileEditor } from './AdvisorProfileEditor';
 
 interface AdminManagementPanelProps {
   currentUser: AdminUserDTO;
+  isFirebaseConnected?: boolean;
+  onConnectFirebase?: () => Promise<boolean>;
   advisorProfile: AdvisorProfileDTO;
   onSaveAdvisorProfile: (next: Partial<AdvisorProfileDTO>) => Promise<AdvisorProfileDTO>;
   authFetch: (input: string, init?: RequestInit) => Promise<Response>;
@@ -64,6 +74,8 @@ function formatDateShort(iso: string | null): string {
 
 export function AdminManagementPanel({
   currentUser,
+  isFirebaseConnected = false,
+  onConnectFirebase,
   advisorProfile,
   onSaveAdvisorProfile,
   authFetch,
@@ -71,11 +83,12 @@ export function AdminManagementPanel({
   onSignOut,
 }: AdminManagementPanelProps) {
   const [admins, setAdmins] = useState<AdminUserDTO[]>([]);
+  const [backendAvailable, setBackendAvailable] = useState(true);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Estado formulario de creación de administrador y clave
+  // Estado formulario de creación de administrador y clave / UID Firebase
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -105,20 +118,43 @@ export function AdminManagementPanel({
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await authFetch('/api/crm/admins');
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'No se pudo cargar la lista de administradores.');
+      const mergedByUid = new Map<string, AdminUserDTO>();
+
+      const backendRes = await tryBackendJson<AdminUserDTO[]>(
+        '/api/crm/admins',
+        undefined,
+        authFetch
+      );
+      setBackendAvailable(backendRes.backendAvailable);
+
+      if (backendRes.ok && Array.isArray(backendRes.data)) {
+        for (const item of backendRes.data) {
+          mergedByUid.set(item.uid, item);
+        }
       }
-      setAdmins(data as AdminUserDTO[]);
+
+      if (auth.currentUser) {
+        const fsAdmins = await listFirestoreAdmins();
+        for (const item of fsAdmins) {
+          if (!mergedByUid.has(item.uid)) {
+            mergedByUid.set(item.uid, item);
+          }
+        }
+      }
+
+      if (mergedByUid.size === 0) {
+        mergedByUid.set(currentUser.uid, currentUser);
+      }
+
+      setAdmins(Array.from(mergedByUid.values()));
     } catch (err: unknown) {
       setErrorMsg(
-        err instanceof Error ? err.message : 'Error al consultar administradores en Cloud SQL.'
+        err instanceof Error ? err.message : 'Error al consultar el directorio de administradores.'
       );
     } finally {
       setLoading(false);
     }
-  }, [authFetch]);
+  }, [authFetch, currentUser]);
 
   useEffect(() => {
     loadAdmins();
@@ -137,38 +173,68 @@ export function AdminManagementPanel({
     setCreating(true);
 
     try {
-      const res = await authFetch('/api/crm/admins', {
-        method: 'POST',
-        body: JSON.stringify({
-          displayName,
-          username,
-          email,
-          role,
-          password,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Error al crear el administrador.');
-      }
+      const backendRes = await tryBackendJson<AdminUserDTO>(
+        '/api/crm/admins',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            displayName,
+            username,
+            email,
+            role,
+            password,
+          }),
+        },
+        authFetch
+      );
 
-      const created = data as AdminUserDTO;
-      setIssuedCredential({
-        name: created.displayName || displayName,
-        username: created.username || username,
-        email: created.email,
-        password,
-        role: created.role,
-      });
+      if (backendRes.backendAvailable) {
+        if (!backendRes.ok || !backendRes.data) {
+          throw new Error(backendRes.error || 'Error al crear el administrador.');
+        }
+        const created = backendRes.data;
+        if (auth.currentUser) {
+          await createFirestoreAdminByUid({
+            targetUid: created.uid,
+            email: created.email,
+            displayName: created.displayName || displayName,
+            role: created.role,
+          });
+        }
+
+        setIssuedCredential({
+          name: created.displayName || displayName,
+          username: created.username || username,
+          email: created.email,
+          password,
+          role: created.role,
+        });
+      } else {
+        // Modo directo Cloud Firestore (Firebase Hosting): username se usa como UID de Firebase Auth del asesor
+        if (!auth.currentUser) {
+          throw new Error('Conecte su sesión de Firebase para registrar administradores en la nube.');
+        }
+        const createdFs = await createFirestoreAdminByUid({
+          targetUid: username.trim(),
+          email,
+          displayName,
+          role,
+        });
+        setIssuedCredential({
+          name: createdFs.displayName || displayName,
+          username: createdFs.uid,
+          email: createdFs.email,
+          password: 'Login con cuenta Google / Firebase Auth',
+          role: createdFs.role,
+        });
+      }
 
       setDisplayName('');
       setUsername('');
       setEmail('');
       setPassword('');
       setRole('admin');
-      setSuccessMsg(
-        `Clave de acceso creada exitosamente para ${created.displayName || created.email}.`
-      );
+      setSuccessMsg(`Cuenta de administrador registrada exitosamente.`);
       await loadAdmins();
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'No se pudo registrar el administrador.');
@@ -183,9 +249,9 @@ export function AdminManagementPanel({
       'Credenciales de Acceso — Autofin Venezuela CRM',
       `Nombre: ${issuedCredential.name}`,
       `Rol: ${formatRoleLabel(issuedCredential.role)}`,
-      `Usuario: ${issuedCredential.username}`,
+      `Usuario / UID: ${issuedCredential.username}`,
       `Correo: ${issuedCredential.email}`,
-      `Clave: ${issuedCredential.password}`,
+      `Acceso: ${issuedCredential.password}`,
     ].join('\n');
 
     try {
@@ -207,16 +273,24 @@ export function AdminManagementPanel({
     setErrorMsg(null);
     setSuccessMsg(null);
     try {
-      const res = await authFetch(`/api/crm/admins/${encodeURIComponent(targetUid)}/password`, {
-        method: 'PATCH',
-        body: JSON.stringify({ password: newRowPassword }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'No se pudo actualizar la clave.');
+      const res = await tryBackendJson<AdminUserDTO>(
+        `/api/crm/admins/${encodeURIComponent(targetUid)}/password`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ password: newRowPassword }),
+        },
+        authFetch
+      );
+      if (!res.backendAvailable) {
+        throw new Error(
+          'En Firebase Hosting directo las cuentas ingresan con Firebase Auth (Google) sin clave estática.'
+        );
+      }
+      if (!res.ok || !res.data) {
+        throw new Error(res.error || 'No se pudo actualizar la clave.');
       }
 
-      const updated = data as AdminUserDTO;
+      const updated = res.data;
       setIssuedCredential({
         name: updated.displayName || targetLabel,
         username: updated.username || updated.email,
@@ -239,13 +313,25 @@ export function AdminManagementPanel({
     setErrorMsg(null);
     setSuccessMsg(null);
     try {
-      const res = await authFetch(`/api/crm/admins/${encodeURIComponent(target.uid)}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ isActive: !target.isActive }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'No se pudo cambiar el estado de la cuenta.');
+      const backendRes = await tryBackendJson<AdminUserDTO>(
+        `/api/crm/admins/${encodeURIComponent(target.uid)}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ isActive: !target.isActive }),
+        },
+        authFetch
+      );
+      if (backendRes.backendAvailable && !backendRes.ok) {
+        throw new Error(backendRes.error || 'No se pudo cambiar el estado de la cuenta.');
+      }
+      if (auth.currentUser) {
+        try {
+          await updateFirestoreAdminAccount(target.uid, target, {
+            isActive: !target.isActive,
+          });
+        } catch {
+          // If only in SQL, ignore missing Firestore doc
+        }
       }
       setSuccessMsg(
         `Cuenta de ${target.displayName || target.email} ${
@@ -262,12 +348,22 @@ export function AdminManagementPanel({
     setErrorMsg(null);
     setSuccessMsg(null);
     try {
-      const res = await authFetch(`/api/crm/admins/${encodeURIComponent(target.uid)}`, {
-        method: 'DELETE',
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'No se pudo eliminar la cuenta.');
+      const backendRes = await tryBackendJson<{ deleted: boolean }>(
+        `/api/crm/admins/${encodeURIComponent(target.uid)}`,
+        {
+          method: 'DELETE',
+        },
+        authFetch
+      );
+      if (backendRes.backendAvailable && !backendRes.ok) {
+        throw new Error(backendRes.error || 'No se pudo eliminar la cuenta.');
+      }
+      if (auth.currentUser) {
+        try {
+          await deleteFirestoreAdminAccount(target.uid);
+        } catch {
+          // Ignore if record only existed in SQL
+        }
       }
       setConfirmDeleteUid(null);
       setSuccessMsg(`Cuenta de ${target.displayName || target.email} retirada del sistema.`);
@@ -287,16 +383,34 @@ export function AdminManagementPanel({
           </div>
           <div>
             <h1 className="text-xl font-bold text-slate-900">
-              Administradores y Creación de Claves de Acceso
+              Administradores y Control de Acceso (Firebase Cloud + CRM)
             </h1>
             <p className="text-xs text-slate-500 mt-0.5">
-              Sesión activa: <strong className="text-slate-800">{currentUser.displayName || currentUser.email}</strong>{' '}
-              · {formatRoleLabel(currentUser.role)} · Claves cifradas con scrypt en PostgreSQL
+              Sesión activa:{' '}
+              <strong className="text-slate-800">
+                {currentUser.displayName || currentUser.email}
+              </strong>{' '}
+              · {formatRoleLabel(currentUser.role)} ·{' '}
+              {isFirebaseConnected
+                ? 'Sincronizado con Firebase Cloud Firestore'
+                : backendAvailable
+                  ? 'Sesión local activa (puede vincular Firebase Cloud)'
+                  : 'Modo Firebase Hosting'}
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {!isFirebaseConnected && onConnectFirebase && (
+            <button
+              type="button"
+              onClick={() => void onConnectFirebase()}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-sky-800 bg-sky-50 border border-sky-200 rounded-lg hover:bg-sky-100 transition-colors whitespace-nowrap shrink-0"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-sky-700" />
+              <span>Vincular Sesión Firebase Cloud</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={loadAdmins}
@@ -430,14 +544,20 @@ export function AdminManagementPanel({
 
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">
-              Usuario de Acceso *
+              {backendAvailable ? 'Usuario de Acceso *' : 'UID de Firebase Auth del Asesor *'}
             </label>
             <input
               type="text"
               required
               value={username}
-              onChange={(e) => setUsername(e.target.value.replace(/\s+/g, '').toLowerCase())}
-              placeholder="Ej. mfgomez"
+              onChange={(e) =>
+                setUsername(
+                  backendAvailable
+                    ? e.target.value.replace(/\s+/g, '').toLowerCase()
+                    : e.target.value.trim()
+                )
+              }
+              placeholder={backendAvailable ? 'Ej. mfgomez' : 'UID de Firebase Authentication'}
               className="w-full px-3.5 py-2 text-sm font-mono rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-600"
             />
           </div>
@@ -471,39 +591,41 @@ export function AdminManagementPanel({
             </select>
           </div>
 
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-medium text-slate-700">
-                Clave de Acceso (mín. 6 caracteres) *
-              </label>
-              <button
-                type="button"
-                onClick={handleGenerateCreatePassword}
-                className="text-xs font-semibold text-sky-700 hover:text-sky-900"
-              >
-                Generar clave segura
-              </button>
+          {backendAvailable && (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-slate-700">
+                  Clave de Acceso (mín. 6 caracteres) *
+                </label>
+                <button
+                  type="button"
+                  onClick={handleGenerateCreatePassword}
+                  className="text-xs font-semibold text-sky-700 hover:text-sky-900"
+                >
+                  Generar clave segura
+                </button>
+              </div>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Ingrese o genere una clave"
+                  className="w-full pl-3.5 pr-10 py-2 text-sm font-mono rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-600"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label="Mostrar u ocultar clave"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
-            <div className="relative">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                required
-                minLength={6}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Ingrese o genere una clave"
-                className="w-full pl-3.5 pr-10 py-2 text-sm font-mono rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-600"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((v) => !v)}
-                aria-label="Mostrar u ocultar clave"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1"
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
+          )}
 
           <button
             type="submit"
@@ -511,7 +633,13 @@ export function AdminManagementPanel({
             className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-sky-700 rounded-lg hover:bg-sky-800 disabled:opacity-60 transition-colors"
           >
             <KeyRound className="w-4 h-4" />
-            <span>{creating ? 'Creando clave...' : 'Crear Administrador y Guardar Clave'}</span>
+            <span>
+              {creating
+                ? 'Guardando...'
+                : backendAvailable
+                  ? 'Crear Administrador y Guardar Clave'
+                  : 'Autorizar Administrador en Firebase'}
+            </span>
           </button>
         </form>
 

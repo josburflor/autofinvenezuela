@@ -21,12 +21,30 @@ import {
   Printer,
   RefreshCw,
   Search,
+  ShieldCheck,
   Trash2,
   UserCheck,
   X,
 } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { apiFetch, websocketUrl } from './lib/api-url';
+import { tryBackendJson, websocketUrl } from './lib/api-url';
+import { auth } from './lib/firebase';
+import {
+  addFirestoreLeadActivity,
+  addFirestoreLeadAttachment,
+  buildCedulaLockId,
+  createFirestoreLead,
+  deleteFirestoreLead,
+  deleteFirestoreLeadAttachment,
+  fetchFirestoreAdvisorProfile,
+  fetchFirestoreCalculatorSettings,
+  isDuplicatePermissionError,
+  saveFirestoreAdvisorProfile,
+  saveFirestoreCalculatorSettings,
+  subscribeFirestoreLeads,
+  toggleFirestoreLeadActivity,
+  updateFirestoreLead,
+} from './lib/firestore-crm';
 import { PublicLeadForm } from './components/PublicLeadForm';
 import { FinancingCalculator } from './components/FinancingCalculator';
 import { LeadDetailDrawer } from './components/LeadDetailDrawer';
@@ -127,14 +145,61 @@ function formatRegistrationDate(iso: string | null | undefined): {
   };
 }
 
+function mergeLeadSources(
+  firestoreItems: LeadRecordDTO[],
+  backendItems: LeadRecordDTO[]
+): LeadRecordDTO[] {
+  if (backendItems.length === 0) return firestoreItems;
+  if (firestoreItems.length === 0) return backendItems;
+
+  const fsByCedula = new Map<string, LeadRecordDTO>();
+  const fsById = new Map<number, LeadRecordDTO>();
+  for (const item of firestoreItems) {
+    fsByCedula.set(buildCedulaLockId(item.cedula), item);
+    fsById.set(item.id, item);
+  }
+
+  const merged: LeadRecordDTO[] = [...firestoreItems];
+  const includedFsDocs = new Set(firestoreItems.map((i) => i.firestoreDocId).filter(Boolean));
+
+  for (const sqlLead of backendItems) {
+    const cedKey = buildCedulaLockId(sqlLead.cedula);
+    const matchingFs = fsByCedula.get(cedKey) || fsById.get(sqlLead.id);
+    if (matchingFs) {
+      const idx = merged.findIndex((m) => m.firestoreDocId === matchingFs.firestoreDocId);
+      if (idx !== -1) {
+        merged[idx] = {
+          ...sqlLead,
+          firestoreDocId: matchingFs.firestoreDocId,
+          activities:
+            (matchingFs.activities?.length || 0) >= (sqlLead.activities?.length || 0)
+              ? matchingFs.activities
+              : sqlLead.activities,
+          attachments:
+            (matchingFs.attachments?.length || 0) >= (sqlLead.attachments?.length || 0)
+              ? matchingFs.attachments
+              : sqlLead.attachments,
+        };
+      }
+    } else if (!sqlLead.firestoreDocId || !includedFsDocs.has(sqlLead.firestoreDocId)) {
+      merged.push(sqlLead);
+    }
+  }
+
+  return merged;
+}
+
 function AutofinWorkspace() {
   const {
     user,
     isAdmin,
+    isFirebaseConnected,
+    authReady,
     loading: authLoading,
     authError,
     clearAuthError,
     signInWithCredentials,
+    signInWithFirebaseGoogle,
     signOutAdvisor,
     authFetch,
     getAdminToken,
@@ -147,11 +212,12 @@ function AutofinWorkspace() {
   const [leadsError, setLeadsError] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
 
-  // Estado formulario de acceso con usuario y clave
+  // Estado formulario de acceso con Firebase o usuario y clave
   const [loginIdentifier, setLoginIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [submittingLogin, setSubmittingLogin] = useState(false);
+  const [submittingFirebaseLogin, setSubmittingFirebaseLogin] = useState(false);
 
   const [calculatorSettings, setCalculatorSettings] = useState<CalculatorSettingsDTO>(
     DEFAULT_CALCULATOR_SETTINGS
@@ -175,10 +241,15 @@ function AutofinWorkspace() {
   const [showAdvisorPhotoModal, setShowAdvisorPhotoModal] = useState(false);
   const [showAdminCalcConfigModal, setShowAdminCalcConfigModal] = useState(false);
 
-  // Alertas en tiempo real de Clientes Nuevos desde Captación Web
+  // Alertas en tiempo real de Clientes Nuevos desde Captación Web y estado híbrido Cloud Firestore
   const [newWebLeadAlerts, setNewWebLeadAlerts] = useState<NewWebLeadAlert[]>([]);
   const knownLeadIdsRef = useRef<Set<number> | null>(null);
+  const knownFsDocIdsRef = useRef<Set<string> | null>(null);
   const alertedNewLeadIdsRef = useRef<Set<number>>(new Set());
+  const firestoreLeadsRef = useRef<LeadRecordDTO[]>([]);
+  const backendLeadsRef = useRef<LeadRecordDTO[]>([]);
+  const backendAvailableRef = useRef<boolean>(true);
+  const syncedSqlCedulasRef = useRef<Set<string>>(new Set());
 
   const showTemporaryFeedback = useCallback((msg: string) => {
     setActionFeedback(msg);
@@ -234,10 +305,22 @@ function AutofinWorkspace() {
     setShowAdminCalcConfigModal(false);
     setNewWebLeadAlerts([]);
     knownLeadIdsRef.current = null;
+    knownFsDocIdsRef.current = null;
+    firestoreLeadsRef.current = [];
+    backendLeadsRef.current = [];
     setLoginPassword('');
     await signOutAdvisor();
     setActiveSection('captacion');
   }, [signOutAdvisor]);
+
+  const handleFirebaseLoginClick = async () => {
+    setSubmittingFirebaseLogin(true);
+    try {
+      await signInWithFirebaseGoogle();
+    } finally {
+      setSubmittingFirebaseLogin(false);
+    }
+  };
 
   const handleCredentialLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -254,40 +337,62 @@ function AutofinWorkspace() {
   };
 
   const fetchPublicSettings = useCallback(async () => {
-    try {
-      const [calcRes, profileRes] = await Promise.all([
-        apiFetch('/api/public/calculator-settings'),
-        apiFetch('/api/public/advisor-profile'),
-      ]);
-      if (calcRes.ok) {
-        const calcData = (await calcRes.json()) as CalculatorSettingsDTO;
-        setCalculatorSettings(calcData);
-      }
-      if (profileRes.ok) {
-        const profileData = (await profileRes.json()) as AdvisorProfileDTO;
-        setAdvisorProfile(profileData);
-      }
-    } catch {
-      // Keep default settings on network hiccup
+    const [fsCalcResult, fsProfileResult, apiCalcRes, apiProfileRes] = await Promise.all([
+      fetchFirestoreCalculatorSettings().catch(() => null),
+      fetchFirestoreAdvisorProfile().catch(() => null),
+      tryBackendJson<CalculatorSettingsDTO>('/api/public/calculator-settings'),
+      tryBackendJson<AdvisorProfileDTO>('/api/public/advisor-profile'),
+    ]);
+
+    backendAvailableRef.current = apiCalcRes.backendAvailable || apiProfileRes.backendAvailable;
+
+    if (fsCalcResult) {
+      setCalculatorSettings(fsCalcResult);
+    } else if (apiCalcRes.ok && apiCalcRes.data) {
+      setCalculatorSettings(apiCalcRes.data);
+    }
+
+    if (fsProfileResult) {
+      setAdvisorProfile(fsProfileResult);
+    } else if (apiProfileRes.ok && apiProfileRes.data) {
+      setAdvisorProfile(apiProfileRes.data);
     }
   }, []);
 
   const fetchCrmLeads = useCallback(
     async (silent = false) => {
       if (!user) return;
-      if (!silent) {
+      if (!silent && firestoreLeadsRef.current.length === 0) {
         setLoadingLeads(true);
         setLeadsError(null);
       }
       try {
-        const res = await authFetch('/api/crm/leads');
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || 'Error al cargar la cartera de clientes.');
-        }
-        const fetched = data as LeadRecordDTO[];
+        const res = await tryBackendJson<LeadRecordDTO[]>(
+          '/api/crm/leads',
+          undefined,
+          authFetch
+        );
+        backendAvailableRef.current = res.backendAvailable;
 
-        // Detectar clientes nuevos entrantes durante sincronización silenciosa
+        if (!res.backendAvailable) {
+          if (isFirebaseConnected && auth.currentUser) {
+            setLeads(firestoreLeadsRef.current);
+            setLeadsError(null);
+          } else if (!silent) {
+            setLeadsError(
+              'Servidor Express no detectado en este dominio. Inicie sesión con Firebase para consultar su cartera directamente en Cloud Firestore.'
+            );
+          }
+          return;
+        }
+
+        if (!res.ok || !res.data) {
+          throw new Error(res.error || 'Error al cargar la cartera de clientes.');
+        }
+
+        const fetched = res.data;
+        backendLeadsRef.current = fetched;
+
         if (knownLeadIdsRef.current === null) {
           knownLeadIdsRef.current = new Set(fetched.map((l) => l.id));
         } else {
@@ -301,11 +406,65 @@ function AutofinWorkspace() {
           }
         }
 
-        setLeads(fetched);
+        setLeads(mergeLeadSources(firestoreLeadsRef.current, fetched));
+
+        // Respaldo automático de expedientes previos hacia Cloud Firestore si la sesión Firebase está activa
+        if (isFirebaseConnected && auth.currentUser) {
+          const fsCedulas = new Set(
+            firestoreLeadsRef.current.map((f) => buildCedulaLockId(f.cedula))
+          );
+          for (const sqlLead of fetched) {
+            const cedKey = buildCedulaLockId(sqlLead.cedula);
+            if (!fsCedulas.has(cedKey) && !syncedSqlCedulasRef.current.has(cedKey)) {
+              syncedSqlCedulasRef.current.add(cedKey);
+              void createFirestoreLead(
+                {
+                  firstName: sqlLead.firstName,
+                  lastName: sqlLead.lastName,
+                  cedula: sqlLead.cedula,
+                  phone: sqlLead.phone,
+                  email: sqlLead.email,
+                  city: sqlLead.city,
+                  availableAmount: Number(sqlLead.availableAmount) || 0,
+                  interestType: sqlLead.interestType,
+                  source: sqlLead.source === 'Asesor CRM' ? 'Asesor CRM' : 'Formulario Web',
+                  vehicle: sqlLead.vehicleRequest
+                    ? {
+                        condition:
+                          sqlLead.vehicleRequest.condition === 'Usado' ? 'Usado' : 'Nuevo',
+                        year: sqlLead.vehicleRequest.year,
+                        brand: sqlLead.vehicleRequest.brand,
+                        model: sqlLead.vehicleRequest.model,
+                        estimatedTotalAmount:
+                          Number(sqlLead.vehicleRequest.estimatedTotalAmount) || undefined,
+                      }
+                    : undefined,
+                  property: sqlLead.propertyRequest
+                    ? {
+                        propertySeenConfirmed: sqlLead.propertyRequest.propertySeenConfirmed,
+                        propertyCategory: sqlLead.propertyRequest.propertyCategory || undefined,
+                        estimatedPropertyAmount:
+                          Number(sqlLead.propertyRequest.estimatedPropertyAmount) || undefined,
+                        locationNotes: sqlLead.propertyRequest.locationNotes || undefined,
+                      }
+                    : undefined,
+                },
+                {
+                  forcedNumericId: sqlLead.id,
+                  forcedCreatedAtIso: sqlLead.createdAt,
+                }
+              ).catch(() => {
+                // Ignorar colisión si el bloqueo único ya existe en Cloud Firestore
+              });
+            }
+          }
+        }
       } catch (err: unknown) {
-        if (!silent) {
+        if (!silent && firestoreLeadsRef.current.length === 0) {
           setLeadsError(
-            err instanceof Error ? err.message : 'No se pudo conectar con Cloud SQL.'
+            err instanceof Error
+              ? err.message
+              : 'No se pudo sincronizar la cartera de clientes.'
           );
         }
       } finally {
@@ -314,40 +473,91 @@ function AutofinWorkspace() {
         }
       }
     },
-    [user, authFetch, triggerNewWebLeadAlert]
+    [user, isFirebaseConnected, authFetch, triggerNewWebLeadAlert]
   );
 
   useEffect(() => {
-    fetchPublicSettings();
+    void fetchPublicSettings();
   }, [fetchPublicSettings]);
 
-  // Carga inicial + sincronización periódica cada 15s para detectar nuevos leads web
+  // Suscripción en tiempo real a Cloud Firestore (/leads) cuando Firebase Auth está listo
+  useEffect(() => {
+    if (!authReady || !isFirebaseConnected || !user || !auth.currentUser) {
+      return;
+    }
+
+    const unsubscribe = subscribeFirestoreLeads((fsLeads) => {
+      if (knownFsDocIdsRef.current === null) {
+        knownFsDocIdsRef.current = new Set(
+          fsLeads.map((l) => l.firestoreDocId || String(l.id))
+        );
+      } else {
+        for (const item of fsLeads) {
+          const docKey = item.firestoreDocId || String(item.id);
+          if (!knownFsDocIdsRef.current.has(docKey)) {
+            knownFsDocIdsRef.current.add(docKey);
+            if (item.source === 'Formulario Web') {
+              triggerNewWebLeadAlert(item);
+            }
+          }
+        }
+      }
+
+      firestoreLeadsRef.current = fsLeads;
+      setLeads(mergeLeadSources(fsLeads, backendLeadsRef.current));
+      setLoadingLeads(false);
+      setLeadsError(null);
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [authReady, isFirebaseConnected, user, triggerNewWebLeadAlert]);
+
+  // Carga inicial + sincronización periódica con servidor opcional
   useEffect(() => {
     if (user) {
-      fetchCrmLeads(false);
+      void fetchCrmLeads(false);
       const refreshTimer = window.setInterval(() => {
-        fetchCrmLeads(true);
+        if (backendAvailableRef.current) {
+          void fetchCrmLeads(true);
+        }
       }, 15_000);
       return () => window.clearInterval(refreshTimer);
     } else {
       setLeads([]);
       knownLeadIdsRef.current = null;
+      knownFsDocIdsRef.current = null;
+      firestoreLeadsRef.current = [];
+      backendLeadsRef.current = [];
     }
   }, [user, fetchCrmLeads]);
 
-  // Conexión WebSocket en tiempo real (/ws/crm-events) para alertas instantáneas de Captación Web
+  // Conexión WebSocket complementaria (/ws/crm-events) cuando el servidor Express está activo
   useEffect(() => {
-    if (!user) return;
+    if (!user || !backendAvailableRef.current) return;
 
     let disposed = false;
     let ws: WebSocket | null = null;
     let reconnectTimer: number | null = null;
 
     const connectWs = () => {
-      if (disposed) return;
-      ws = new WebSocket(websocketUrl('/ws/crm-events'));
-      ws.onopen = () => {
-        const token = getAdminToken();
+      if (disposed || !backendAvailableRef.current) return;
+      try {
+        ws = new WebSocket(websocketUrl('/ws/crm-events'));
+      } catch {
+        return;
+      }
+
+      ws.onopen = async () => {
+        let token = getAdminToken();
+        if (!token && auth.currentUser) {
+          try {
+            token = await auth.currentUser.getIdToken();
+          } catch {
+            token = null;
+          }
+        }
         if (token) ws?.send(JSON.stringify({ type: 'AUTH', token }));
         else ws?.close();
       };
@@ -365,16 +575,15 @@ function AutofinWorkspace() {
             if (knownLeadIdsRef.current) {
               knownLeadIdsRef.current.add(newLead.id);
             }
-            setLeads((prev) => {
-              const exists = prev.some((l) => l.id === newLead.id);
-              if (exists) {
-                return prev.map((l) => (l.id === newLead.id ? newLead : l));
-              }
-              return [newLead, ...prev];
-            });
+            backendLeadsRef.current = [
+              newLead,
+              ...backendLeadsRef.current.filter((l) => l.id !== newLead.id),
+            ];
+            setLeads(mergeLeadSources(firestoreLeadsRef.current, backendLeadsRef.current));
             triggerNewWebLeadAlert(newLead);
           } else if (parsed.type === 'LEAD_DELETED' && typeof parsed.leadId === 'number') {
             const removedId = parsed.leadId;
+            backendLeadsRef.current = backendLeadsRef.current.filter((l) => l.id !== removedId);
             setLeads((prev) => prev.filter((l) => l.id !== removedId));
             setSelectedLeadId((curr) => (curr === removedId ? null : curr));
           }
@@ -384,8 +593,8 @@ function AutofinWorkspace() {
       };
 
       ws.onclose = () => {
-        if (!disposed) {
-          reconnectTimer = window.setTimeout(connectWs, 4000);
+        if (!disposed && backendAvailableRef.current) {
+          reconnectTimer = window.setTimeout(connectWs, 6000);
         }
       };
     };
@@ -477,7 +686,7 @@ function AutofinWorkspace() {
     };
   }, [leads, newClientsList.length]);
 
-  // Handlers de mutación contra Cloud SQL
+  // Handlers de mutación contra Firebase Cloud Firestore + sincronización de respaldo Express
   const replaceLeadInState = (updated: LeadRecordDTO) => {
     setLeads((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
   };
@@ -498,25 +707,114 @@ function AutofinWorkspace() {
       selectedPlan?: string;
     }
   ) => {
-    const res = await authFetch(`/api/crm/leads/${leadId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(updates),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Error al actualizar el cliente.');
-    replaceLeadInState(data as LeadRecordDTO);
+    const targetLead = leads.find((l) => l.id === leadId);
+    let updatedInFirestore = false;
+
+    if (targetLead?.firestoreDocId && auth.currentUser) {
+      try {
+        await updateFirestoreLead(targetLead, updates);
+        updatedInFirestore = true;
+      } catch (err: unknown) {
+        if (isDuplicatePermissionError(err)) {
+          throw new Error(
+            'No se permite duplicar clientes: la cédula, teléfono o correo ya pertenece a otro expediente registrado.'
+          );
+        }
+        throw err;
+      }
+    }
+
+    const res = await tryBackendJson<LeadRecordDTO>(
+      `/api/crm/leads/${leadId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(updates),
+      },
+      authFetch
+    );
+
+    if (res.backendAvailable) {
+      if (!res.ok && !updatedInFirestore) {
+        throw new Error(res.error || 'Error al actualizar el cliente.');
+      }
+      if (res.ok && res.data) {
+        replaceLeadInState({
+          ...res.data,
+          firestoreDocId: targetLead?.firestoreDocId,
+        });
+        return;
+      }
+    }
+
+    if (targetLead) {
+      const optimistic: LeadRecordDTO = {
+        ...targetLead,
+        firstName: updates.firstName ?? targetLead.firstName,
+        lastName: updates.lastName ?? targetLead.lastName,
+        cedula: updates.cedula ?? targetLead.cedula,
+        phone: updates.phone ?? targetLead.phone,
+        email: updates.email ?? targetLead.email,
+        city: updates.city ?? targetLead.city,
+        availableAmount:
+          updates.availableAmount !== undefined
+            ? Number(updates.availableAmount).toFixed(2)
+            : targetLead.availableAmount,
+        status: updates.status ?? targetLead.status,
+        nextCallAt:
+          updates.nextCallAt !== undefined ? updates.nextCallAt : targetLead.nextCallAt,
+        updatedAt: new Date().toISOString(),
+        vehicleRequest: targetLead.vehicleRequest
+          ? {
+              ...targetLead.vehicleRequest,
+              estimatedTotalAmount:
+                updates.estimatedTotalAmount !== undefined
+                  ? Number(updates.estimatedTotalAmount).toFixed(2)
+                  : targetLead.vehicleRequest.estimatedTotalAmount,
+              selectedPlan:
+                updates.selectedPlan !== undefined
+                  ? updates.selectedPlan
+                  : targetLead.vehicleRequest.selectedPlan,
+            }
+          : targetLead.vehicleRequest,
+        propertyRequest: targetLead.propertyRequest
+          ? {
+              ...targetLead.propertyRequest,
+              estimatedPropertyAmount:
+                updates.estimatedTotalAmount !== undefined
+                  ? Number(updates.estimatedTotalAmount).toFixed(2)
+                  : targetLead.propertyRequest.estimatedPropertyAmount,
+            }
+          : targetLead.propertyRequest,
+      };
+      replaceLeadInState(optimistic);
+    }
   };
 
   const handleConfirmDeleteLead = async (leadId: number) => {
-    const res = await authFetch(`/api/crm/leads/${leadId}`, {
-      method: 'DELETE',
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'No se pudo eliminar el cliente de la base de datos.');
+    const targetLead = leads.find((l) => l.id === leadId);
+    let deletedInFirestore = false;
+
+    if (targetLead?.firestoreDocId && auth.currentUser) {
+      await deleteFirestoreLead(targetLead);
+      deletedInFirestore = true;
     }
 
-    const deletedName = data.clientName || `Expediente #${leadId}`;
+    const res = await tryBackendJson<{ clientName?: string }>(
+      `/api/crm/leads/${leadId}`,
+      { method: 'DELETE' },
+      authFetch
+    );
+
+    if (res.backendAvailable && !res.ok && res.status !== 404 && !deletedInFirestore) {
+      throw new Error(res.error || 'No se pudo eliminar el cliente de la base de datos.');
+    }
+
+    const deletedName =
+      res.data?.clientName ||
+      (targetLead ? `${targetLead.firstName} ${targetLead.lastName}` : `Expediente #${leadId}`);
+
+    firestoreLeadsRef.current = firestoreLeadsRef.current.filter((item) => item.id !== leadId);
+    backendLeadsRef.current = backendLeadsRef.current.filter((item) => item.id !== leadId);
     setLeads((prev) => prev.filter((item) => item.id !== leadId));
     setNewWebLeadAlerts((prev) => prev.filter((a) => a.lead.id !== leadId));
     if (selectedLeadId === leadId) {
@@ -539,21 +837,81 @@ function AutofinWorkspace() {
       completed?: boolean;
     }
   ) => {
-    const res = await authFetch(`/api/crm/leads/${leadId}/activities`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Error al registrar actividad.');
-    replaceLeadInState(data as LeadRecordDTO);
+    const targetLead = leads.find((l) => l.id === leadId);
+    let fsActivity = null;
+
+    if (targetLead?.firestoreDocId && auth.currentUser) {
+      fsActivity = await addFirestoreLeadActivity(targetLead, {
+        ...payload,
+        advisorName: user?.displayName || advisorProfile.advisorName,
+      });
+    }
+
+    const res = await tryBackendJson<LeadRecordDTO>(
+      `/api/crm/leads/${leadId}/activities`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      authFetch
+    );
+
+    if (res.backendAvailable) {
+      if (!res.ok && !fsActivity) {
+        throw new Error(res.error || 'Error al registrar actividad.');
+      }
+      if (res.ok && res.data && !fsActivity) {
+        replaceLeadInState({
+          ...res.data,
+          firestoreDocId: targetLead?.firestoreDocId,
+        });
+        return;
+      }
+    }
+
+    if (targetLead && fsActivity) {
+      replaceLeadInState({
+        ...targetLead,
+        activities: [fsActivity, ...(targetLead.activities || [])],
+      });
+    }
   };
 
   const handleToggleActivity = async (activityId: number, completed: boolean) => {
-    const res = await authFetch(`/api/crm/activities/${activityId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ completed }),
-    });
-    if (res.ok) {
+    let parentDocId: string | undefined;
+    let actDocId: string | undefined;
+
+    for (const l of leads) {
+      const found = l.activities?.find((a) => a.id === activityId);
+      if (found) {
+        parentDocId = l.firestoreDocId;
+        actDocId = found.firestoreDocId;
+        break;
+      }
+    }
+
+    if (parentDocId && actDocId && auth.currentUser) {
+      await toggleFirestoreLeadActivity(parentDocId, actDocId, completed);
+    }
+
+    setLeads((prev) =>
+      prev.map((l) => ({
+        ...l,
+        activities: l.activities?.map((a) =>
+          a.id === activityId ? { ...a, completed } : a
+        ),
+      }))
+    );
+
+    const res = await tryBackendJson(
+      `/api/crm/activities/${activityId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ completed }),
+      },
+      authFetch
+    );
+    if (res.backendAvailable && res.ok && !parentDocId) {
       await fetchCrmLeads(true);
     }
   };
@@ -563,7 +921,7 @@ function AutofinWorkspace() {
       await handleToggleActivity(activityId, true);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [authFetch, fetchCrmLeads]
+    [leads, authFetch, fetchCrmLeads]
   );
 
   const {
@@ -582,14 +940,42 @@ function AutofinWorkspace() {
   });
 
   const handleSendSms = async (leadId: number, phone: string, message: string) => {
-    const res = await authFetch(`/api/crm/leads/${leadId}/sms`, {
-      method: 'POST',
-      body: JSON.stringify({ phone, message }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Error al despachar SMS.');
-    if (data.lead) {
-      replaceLeadInState(data.lead as LeadRecordDTO);
+    const targetLead = leads.find((l) => l.id === leadId);
+    let fsSmsAct = null;
+
+    if (targetLead?.firestoreDocId && auth.currentUser) {
+      fsSmsAct = await addFirestoreLeadActivity(targetLead, {
+        activityType: 'sms',
+        title: `Mensaje SMS enviado a ${phone}`,
+        description: message,
+        completed: true,
+        advisorName: user?.displayName || advisorProfile.advisorName,
+      });
+    }
+
+    const res = await tryBackendJson<{ lead?: LeadRecordDTO }>(
+      `/api/crm/leads/${leadId}/sms`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ phone, message }),
+      },
+      authFetch
+    );
+
+    if (res.backendAvailable && !res.ok && !fsSmsAct) {
+      throw new Error(res.error || 'Error al despachar SMS.');
+    }
+
+    if (res.data?.lead && !fsSmsAct) {
+      replaceLeadInState({
+        ...res.data.lead,
+        firestoreDocId: targetLead?.firestoreDocId,
+      });
+    } else if (targetLead && fsSmsAct) {
+      replaceLeadInState({
+        ...targetLead,
+        activities: [fsSmsAct, ...(targetLead.activities || [])],
+      });
     }
   };
 
@@ -603,65 +989,169 @@ function AutofinWorkspace() {
       caption?: string;
     }
   ) => {
-    const res = await authFetch(`/api/crm/leads/${leadId}/attachments`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Error al subir archivo.');
-    replaceLeadInState(data as LeadRecordDTO);
+    const targetLead = leads.find((l) => l.id === leadId);
+    let fsAtt = null;
+
+    if (targetLead?.firestoreDocId && auth.currentUser) {
+      fsAtt = await addFirestoreLeadAttachment(targetLead, {
+        ...payload,
+        uploadedBy: user?.displayName || advisorProfile.advisorName,
+      });
+    }
+
+    const res = await tryBackendJson<LeadRecordDTO>(
+      `/api/crm/leads/${leadId}/attachments`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      authFetch
+    );
+
+    if (res.backendAvailable) {
+      if (!res.ok && !fsAtt) {
+        throw new Error(res.error || 'Error al subir archivo.');
+      }
+      if (res.ok && res.data && !fsAtt) {
+        replaceLeadInState({
+          ...res.data,
+          firestoreDocId: targetLead?.firestoreDocId,
+        });
+        return;
+      }
+    }
+
+    if (targetLead && fsAtt) {
+      replaceLeadInState({
+        ...targetLead,
+        attachments: [fsAtt, ...(targetLead.attachments || [])],
+      });
+    }
   };
 
   const handleDeleteAttachment = async (attachmentId: number) => {
-    const res = await authFetch(`/api/crm/attachments/${attachmentId}`, {
-      method: 'DELETE',
-    });
-    if (res.ok) {
+    let parentDocId: string | undefined;
+    let attDocId: string | undefined;
+
+    for (const l of leads) {
+      const found = l.attachments?.find((a) => a.id === attachmentId);
+      if (found) {
+        parentDocId = l.firestoreDocId;
+        attDocId = found.firestoreDocId;
+        break;
+      }
+    }
+
+    if (parentDocId && attDocId && auth.currentUser) {
+      await deleteFirestoreLeadAttachment(parentDocId, attDocId);
+    }
+
+    setLeads((prev) =>
+      prev.map((l) => ({
+        ...l,
+        attachments: l.attachments?.filter((a) => a.id !== attachmentId),
+      }))
+    );
+
+    const res = await tryBackendJson(
+      `/api/crm/attachments/${attachmentId}`,
+      { method: 'DELETE' },
+      authFetch
+    );
+    if (res.backendAvailable && res.ok && !parentDocId) {
       await fetchCrmLeads(true);
     }
   };
 
   const handleSaveCalculatorSettings = async (next: CalculatorSettingsDTO) => {
-    const res = await authFetch('/api/crm/calculator-settings', {
-      method: 'PUT',
-      body: JSON.stringify(next),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'No se pudo actualizar la calculadora.');
-    setCalculatorSettings(data as CalculatorSettingsDTO);
+    let savedFs: CalculatorSettingsDTO | null = null;
+    if (auth.currentUser) {
+      savedFs = await saveFirestoreCalculatorSettings(next);
+    }
+
+    const res = await tryBackendJson<CalculatorSettingsDTO>(
+      '/api/crm/calculator-settings',
+      {
+        method: 'PUT',
+        body: JSON.stringify(next),
+      },
+      authFetch
+    );
+
+    if (res.backendAvailable && !res.ok && !savedFs) {
+      throw new Error(res.error || 'No se pudo actualizar la calculadora.');
+    }
+
+    if (!res.backendAvailable && !savedFs) {
+      throw new Error(
+        'Inicie sesión con su cuenta autorizada en Firebase para guardar cambios de la calculadora en la nube.'
+      );
+    }
+
+    setCalculatorSettings(savedFs || res.data || next);
   };
 
   const handleSaveAdvisorProfile = async (
     next: Partial<AdvisorProfileDTO>
   ): Promise<AdvisorProfileDTO> => {
-    const res = await authFetch('/api/crm/advisor-profile', {
-      method: 'PUT',
-      body: JSON.stringify(next),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'No se pudo actualizar el portal y perfil del asesor.');
+    let savedFs: AdvisorProfileDTO | null = null;
+    if (auth.currentUser) {
+      savedFs = await saveFirestoreAdvisorProfile(advisorProfile, next);
     }
-    const saved = data as AdvisorProfileDTO;
+
+    const res = await tryBackendJson<AdvisorProfileDTO>(
+      '/api/crm/advisor-profile',
+      {
+        method: 'PUT',
+        body: JSON.stringify(next),
+      },
+      authFetch
+    );
+
+    if (res.backendAvailable && !res.ok && !savedFs) {
+      throw new Error(res.error || 'No se pudo actualizar el portal y perfil del asesor.');
+    }
+
+    if (!res.backendAvailable && !savedFs) {
+      throw new Error(
+        'Inicie sesión con su cuenta autorizada en Firebase para guardar cambios del portal en la nube.'
+      );
+    }
+
+    const saved = savedFs || res.data || ({ ...advisorProfile, ...next } as AdvisorProfileDTO);
     setAdvisorProfile(saved);
     return saved;
   };
 
   const handleSendConfirmationEmail = async (leadId: number): Promise<string> => {
-    const res = await authFetch(`/api/crm/leads/${leadId}/send-confirmation-email`, {
-      method: 'POST',
-    });
-    const data = await res.json();
+    const res = await tryBackendJson<{
+      lead?: LeadRecordDTO;
+      emailDelivery?: { message?: string };
+    }>(`/api/crm/leads/${leadId}/send-confirmation-email`, { method: 'POST' }, authFetch);
+
+    if (!res.backendAvailable) {
+      throw new Error(
+        'El envío automático por SMTP requiere el servidor Express activo. Puede utilizar el botón de WhatsApp o correo directo desde la ficha.'
+      );
+    }
+
     if (!res.ok) {
       throw new Error(
-        data.error ||
+        res.error ||
           'No se pudo despachar el correo automático. Configure el remitente SMTP en Portal y Calculadora.'
       );
     }
-    if (data.lead) {
-      replaceLeadInState(data.lead as LeadRecordDTO);
+
+    if (res.data?.lead) {
+      const existing = leads.find((l) => l.id === leadId);
+      replaceLeadInState({
+        ...res.data.lead,
+        firestoreDocId: existing?.firestoreDocId,
+      });
     }
-    return data.emailDelivery?.message || 'Correo de confirmación enviado exitosamente al cliente.';
+    return (
+      res.data?.emailDelivery?.message || 'Correo de confirmación enviado exitosamente al cliente.'
+    );
   };
 
   const scrollToEmbeddedCalculator = () => {
@@ -719,6 +1209,33 @@ function AutofinWorkspace() {
           {authError}
         </div>
       )}
+
+      <div className="space-y-3">
+        <button
+          type="button"
+          disabled={submittingFirebaseLogin || submittingLogin}
+          onClick={handleFirebaseLoginClick}
+          className="w-full inline-flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-60 transition-colors"
+        >
+          <ShieldCheck className="w-4 h-4 text-sky-400" />
+          <span>
+            {submittingFirebaseLogin
+              ? 'Conectando con Firebase...'
+              : 'Iniciar Sesión con Firebase'}
+          </span>
+        </button>
+
+        <div className="relative py-1">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-slate-200" />
+          </div>
+          <div className="relative flex justify-center">
+            <span className="bg-white px-2.5 text-[11px] font-medium text-slate-400">
+              o ingresar con usuario y clave local
+            </span>
+          </div>
+        </div>
+      </div>
 
       <form onSubmit={handleCredentialLoginSubmit} className="space-y-4">
         <div>
@@ -1284,6 +1801,8 @@ function AutofinWorkspace() {
             ) : (
               <AdminManagementPanel
                 currentUser={user}
+                isFirebaseConnected={isFirebaseConnected}
+                onConnectFirebase={signInWithFirebaseGoogle}
                 advisorProfile={advisorProfile}
                 onSaveAdvisorProfile={handleSaveAdvisorProfile}
                 authFetch={authFetch}
@@ -1326,6 +1845,17 @@ function AutofinWorkspace() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
+                    {!isFirebaseConnected && (
+                      <button
+                        type="button"
+                        onClick={handleFirebaseLoginClick}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-sky-900 bg-sky-50 border border-sky-200 rounded-lg hover:bg-sky-100 transition-colors whitespace-nowrap shrink-0"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5 text-sky-700" />
+                        <span>Vincular Firebase</span>
+                      </button>
+                    )}
+
                     <ReminderToolbarControl
                       leads={leads}
                       permission={notificationPermission}

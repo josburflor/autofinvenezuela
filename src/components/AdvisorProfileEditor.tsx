@@ -55,7 +55,12 @@ function optimizeHeroImageToDataUrl(file: File): Promise<{ dataUrl: string; byte
           return;
         }
         ctx.drawImage(img, 0, 0, width, height);
-        const compressed = canvas.toDataURL('image/jpeg', 0.82);
+        let quality = 0.8;
+        let compressed = canvas.toDataURL('image/jpeg', quality);
+        while (compressed.length > 850_000 && quality > 0.45) {
+          quality -= 0.1;
+          compressed = canvas.toDataURL('image/jpeg', quality);
+        }
         const commaIdx = compressed.indexOf(',');
         const b64 = commaIdx >= 0 ? compressed.slice(commaIdx + 1) : '';
         const approxBytes = Math.round((b64.length * 3) / 4);

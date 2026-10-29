@@ -7,8 +7,9 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 
-import { requireAdmin, requireAuth } from './src/middleware/auth.ts';
+import { BOOTSTRAPPED_ADMIN_EMAIL, requireAdmin, requireAuth } from './src/middleware/auth.ts';
 import type { AuthRequest } from './src/middleware/auth.ts';
+import { adminAuth } from './src/lib/firebase-admin.ts';
 import {
   issueAdminSessionToken,
   revokeAdminSessionToken,
@@ -804,11 +805,29 @@ async function startServer() {
       clearTimeout(authTimeout);
       try {
         const message = JSON.parse(raw.toString()) as { type?: string; token?: string };
-        const claims = message.type === 'AUTH' && message.token
-          ? verifyAdminSessionToken(message.token)
-          : null;
-        const user = claims ? await getUserByUid(claims.uid) : null;
-        if (!user?.isActive) {
+        if (message.type !== 'AUTH' || !message.token) {
+          clientWs.close(1008, 'No autorizado');
+          return;
+        }
+
+        if (message.token.startsWith('autofin_adm.')) {
+          const claims = verifyAdminSessionToken(message.token);
+          const user = claims ? await getUserByUid(claims.uid) : null;
+          if (!user?.isActive) {
+            clientWs.close(1008, 'No autorizado');
+            return;
+          }
+          authenticatedCrmClients.add(clientWs);
+          return;
+        }
+
+        const decoded = await adminAuth.verifyIdToken(message.token);
+        const cleanEmail = decoded.email?.trim().toLowerCase() || '';
+        const dbUser = await getUserByUid(decoded.uid);
+        const authorized =
+          decoded.email_verified === true &&
+          (cleanEmail === BOOTSTRAPPED_ADMIN_EMAIL || Boolean(dbUser?.isActive));
+        if (!authorized) {
           clientWs.close(1008, 'No autorizado');
           return;
         }

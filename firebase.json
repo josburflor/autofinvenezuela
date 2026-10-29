@@ -1,4 +1,7 @@
 {
+  "firestore": {
+    "rules": "firestore.rules"
+  },
   "hosting": {
     "site": "ai-studio-applet-webapp-5d2a7",
     "public": "dist",

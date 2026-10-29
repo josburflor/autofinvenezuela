@@ -1,0 +1,724 @@
+{
+  "entities": {
+    "AdminMember": {
+      "title": "AdminMember",
+      "description": "Authorized CRM administrator or commercial advisor account mapped to Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the administrator or advisor.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified email address of the staff member.",
+          "minLength": 5,
+          "maxLength": 160,
+          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Full display name of the administrator or advisor.",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "role": {
+          "type": "string",
+          "description": "Access control tier within Autofin Venezuela CRM.",
+          "enum": ["super_admin", "admin", "asesor"],
+          "minLength": 5,
+          "maxLength": 20
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether the staff member is currently active."
+        },
+        "createdByUid": {
+          "type": "string",
+          "description": "UID of the administrator who registered this record.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the administrator record was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the administrator record was last updated."
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "displayName",
+        "role",
+        "isActive",
+        "createdByUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdvisorProfile": {
+      "title": "AdvisorProfile",
+      "description": "Public commercial profile for the official advisor and headquarters in CC Salvamall, Valencia.",
+      "type": "object",
+      "properties": {
+        "advisorName": {
+          "type": "string",
+          "description": "Official advisor name displayed on Captación Web.",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "advisorTitle": {
+          "type": "string",
+          "description": "Official commercial title of the advisor.",
+          "minLength": 2,
+          "maxLength": 160
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "URL or validated <=200KB data URL of the circular advisor photo.",
+          "minLength": 5,
+          "maxLength": 300000
+        },
+        "welcomeBio": {
+          "type": "string",
+          "description": "Public commercial welcome message.",
+          "minLength": 5,
+          "maxLength": 600
+        },
+        "officeAddress": {
+          "type": "string",
+          "description": "Official headquarters address in Valencia, Venezuela.",
+          "minLength": 5,
+          "maxLength": 200
+        },
+        "heroTitle": {
+          "type": "string",
+          "description": "Main headline on the Captación Web hero card.",
+          "minLength": 5,
+          "maxLength": 180
+        },
+        "heroSubtitle": {
+          "type": "string",
+          "description": "Subtitle on the Captación Web hero card.",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "updatedByUid": {
+          "type": "string",
+          "description": "UID of the staff member who last updated the profile.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the latest update."
+        }
+      },
+      "required": [
+        "advisorName",
+        "advisorTitle",
+        "photoUrl",
+        "welcomeBio",
+        "officeAddress",
+        "heroTitle",
+        "heroSubtitle",
+        "updatedByUid",
+        "updatedAt"
+      ]
+    },
+    "PortalAsset": {
+      "title": "PortalAsset",
+      "description": "Customizable hero image banner for each financing category (vehiculo, moto, inmueble).",
+      "type": "object",
+      "properties": {
+        "assetKey": {
+          "type": "string",
+          "description": "Category identifier matching document ID.",
+          "enum": ["vehiculo", "moto", "inmueble"],
+          "minLength": 4,
+          "maxLength": 16
+        },
+        "dataUrl": {
+          "type": "string",
+          "description": "Optimized image URL or data URL (or empty string when using default asset).",
+          "minLength": 0,
+          "maxLength": 900000
+        },
+        "updatedByUid": {
+          "type": "string",
+          "description": "UID of the staff member who updated the banner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the hero image was updated."
+        }
+      },
+      "required": ["assetKey", "dataUrl", "updatedByUid", "updatedAt"]
+    },
+    "CalculatorConfig": {
+      "title": "CalculatorConfig",
+      "description": "Parameters for the Autofin Venezuela financing calculator.",
+      "type": "object",
+      "properties": {
+        "defaultAssetAmount": {
+          "type": "number",
+          "description": "Default asset amount in USD."
+        },
+        "baseInstallments": {
+          "type": "integer",
+          "description": "Base number of monthly installments."
+        },
+        "adminFee": {
+          "type": "number",
+          "description": "Administrative fee in USD."
+        },
+        "planGarantizado1Months": {
+          "type": "integer",
+          "description": "Months for Guaranteed Plan 1."
+        },
+        "planGarantizado2Months": {
+          "type": "integer",
+          "description": "Months for Guaranteed Plan 2."
+        },
+        "planPromoMonths": {
+          "type": "integer",
+          "description": "Months for Promotional Plan."
+        },
+        "planAhorroMonths": {
+          "type": "integer",
+          "description": "Months for Savings Plan."
+        },
+        "fastDelivery1Pct": {
+          "type": "number",
+          "description": "Initial percentage for Fast Delivery 1."
+        },
+        "fastDelivery2Pct": {
+          "type": "number",
+          "description": "Initial percentage for Fast Delivery 2."
+        },
+        "promo4Plus8Pct": {
+          "type": "number",
+          "description": "Initial percentage for Promo 4+8."
+        },
+        "ahorroFastPct": {
+          "type": "number",
+          "description": "Initial percentage for Fast Savings."
+        },
+        "updatedByUid": {
+          "type": "string",
+          "description": "UID of the staff member who updated calculator parameters.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the latest update."
+        }
+      },
+      "required": [
+        "defaultAssetAmount",
+        "baseInstallments",
+        "adminFee",
+        "planGarantizado1Months",
+        "planGarantizado2Months",
+        "planPromoMonths",
+        "planAhorroMonths",
+        "fastDelivery1Pct",
+        "fastDelivery2Pct",
+        "promo4Plus8Pct",
+        "ahorroFastPct",
+        "updatedByUid",
+        "updatedAt"
+      ]
+    },
+    "Lead": {
+      "title": "Lead",
+      "description": "Customer financing application record for vehicles, motorcycles, or real estate.",
+      "type": "object",
+      "properties": {
+        "numericId": {
+          "type": "integer",
+          "description": "Numeric expediente identifier for CRM sorting and display."
+        },
+        "docId": {
+          "type": "string",
+          "description": "Firestore document ID matching path variable.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "firstName": {
+          "type": "string",
+          "description": "Client first name.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "lastName": {
+          "type": "string",
+          "description": "Client last name.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "cedula": {
+          "type": "string",
+          "description": "Client national ID (Cédula/RIF).",
+          "minLength": 3,
+          "maxLength": 24
+        },
+        "phone": {
+          "type": "string",
+          "description": "Client phone number.",
+          "minLength": 6,
+          "maxLength": 24
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Client email address.",
+          "minLength": 5,
+          "maxLength": 160,
+          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+        },
+        "city": {
+          "type": "string",
+          "description": "Client city in Venezuela.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "availableAmount": {
+          "type": "number",
+          "description": "Available initial capital in USD."
+        },
+        "interestType": {
+          "type": "string",
+          "description": "Type of asset requested.",
+          "enum": ["vehiculo", "moto", "inmueble"],
+          "minLength": 4,
+          "maxLength": 16
+        },
+        "status": {
+          "type": "string",
+          "description": "Commercial pipeline status.",
+          "enum": [
+            "Nuevo",
+            "Contactado",
+            "Cita Presencial",
+            "En Financiamiento",
+            "Cerrado",
+            "Perdido"
+          ],
+          "minLength": 5,
+          "maxLength": 24
+        },
+        "source": {
+          "type": "string",
+          "description": "Origin channel of the lead.",
+          "enum": ["Formulario Web", "Asesor CRM"],
+          "minLength": 6,
+          "maxLength": 30
+        },
+        "nextCallAtIso": {
+          "type": "string",
+          "description": "ISO timestamp for the next scheduled call or empty string.",
+          "minLength": 0,
+          "maxLength": 40
+        },
+        "assignedAdvisorUid": {
+          "type": "string",
+          "description": "Assigned advisor UID or empty string when unassigned.",
+          "minLength": 0,
+          "maxLength": 128
+        },
+        "vehicleCondition": {
+          "type": "string",
+          "description": "Vehicle or motorcycle condition (Nuevo, Usado, or empty).",
+          "enum": ["", "Nuevo", "Usado"],
+          "minLength": 0,
+          "maxLength": 10
+        },
+        "vehicleYear": {
+          "type": "integer",
+          "description": "Model year for vehicle/motorcycle, or 0 for real estate."
+        },
+        "vehicleBrand": {
+          "type": "string",
+          "description": "Brand of vehicle or motorcycle.",
+          "minLength": 0,
+          "maxLength": 80
+        },
+        "vehicleModel": {
+          "type": "string",
+          "description": "Model of vehicle or motorcycle.",
+          "minLength": 0,
+          "maxLength": 100
+        },
+        "estimatedTotalAmount": {
+          "type": "number",
+          "description": "Estimated total value of the asset in USD (0 if unset)."
+        },
+        "selectedPlan": {
+          "type": "string",
+          "description": "Quoted financing plan label.",
+          "minLength": 0,
+          "maxLength": 120
+        },
+        "propertySeenConfirmed": {
+          "type": "boolean",
+          "description": "Whether the client confirmed having seen the property and knowing its price."
+        },
+        "propertyCategory": {
+          "type": "string",
+          "description": "Category of real estate requested.",
+          "minLength": 0,
+          "maxLength": 100
+        },
+        "locationNotes": {
+          "type": "string",
+          "description": "Additional notes on property location.",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "cedulaLockId": {
+          "type": "string",
+          "description": "Normalized lock document ID for cedula uniqueness.",
+          "minLength": 5,
+          "maxLength": 64,
+          "pattern": "^ced_[a-zA-Z0-9_\\-]+$"
+        },
+        "phoneLockId": {
+          "type": "string",
+          "description": "Normalized lock document ID for phone uniqueness.",
+          "minLength": 5,
+          "maxLength": 64,
+          "pattern": "^tel_[a-zA-Z0-9_\\-]+$"
+        },
+        "emailLockId": {
+          "type": "string",
+          "description": "Normalized lock document ID for email uniqueness.",
+          "minLength": 5,
+          "maxLength": 128,
+          "pattern": "^eml_[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAtIso": {
+          "type": "string",
+          "description": "ISO timestamp mirror for deterministic chronological sorting.",
+          "minLength": 16,
+          "maxLength": 40
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable server timestamp of registration."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest update."
+        }
+      },
+      "required": [
+        "numericId",
+        "docId",
+        "firstName",
+        "lastName",
+        "cedula",
+        "phone",
+        "email",
+        "city",
+        "availableAmount",
+        "interestType",
+        "status",
+        "source",
+        "nextCallAtIso",
+        "assignedAdvisorUid",
+        "vehicleCondition",
+        "vehicleYear",
+        "vehicleBrand",
+        "vehicleModel",
+        "estimatedTotalAmount",
+        "selectedPlan",
+        "propertySeenConfirmed",
+        "propertyCategory",
+        "locationNotes",
+        "cedulaLockId",
+        "phoneLockId",
+        "emailLockId",
+        "createdAtIso",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LeadIdentifierLock": {
+      "title": "LeadIdentifierLock",
+      "description": "Atomic uniqueness lock preventing duplicate cedula, phone, or email registrations.",
+      "type": "object",
+      "properties": {
+        "lockId": {
+          "type": "string",
+          "description": "Deterministic lock document ID.",
+          "minLength": 5,
+          "maxLength": 128,
+          "pattern": "^(ced|tel|eml)_[a-zA-Z0-9_\\-]+$"
+        },
+        "lockType": {
+          "type": "string",
+          "description": "Identifier category.",
+          "enum": ["cedula", "phone", "email"],
+          "minLength": 5,
+          "maxLength": 10
+        },
+        "leadDocId": {
+          "type": "string",
+          "description": "Referenced lead document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable server timestamp."
+        }
+      },
+      "required": ["lockId", "lockType", "leadDocId", "createdAt"]
+    },
+    "LeadActivity": {
+      "title": "LeadActivity",
+      "description": "Timeline interaction, scheduled call, or appointment belonging to a lead.",
+      "type": "object",
+      "properties": {
+        "numericId": {
+          "type": "integer",
+          "description": "Numeric activity ID for UI compatibility."
+        },
+        "leadDocId": {
+          "type": "string",
+          "description": "Parent lead document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "advisorUid": {
+          "type": "string",
+          "description": "UID of the advisor who logged the activity.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "advisorName": {
+          "type": "string",
+          "description": "Display name of the advisor.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "activityType": {
+          "type": "string",
+          "description": "Type of commercial interaction.",
+          "enum": [
+            "llamada",
+            "cita_presencial",
+            "nota",
+            "whatsapp",
+            "sms",
+            "correo",
+            "cotizacion"
+          ],
+          "minLength": 3,
+          "maxLength": 24
+        },
+        "title": {
+          "type": "string",
+          "description": "Short summary of the activity.",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed commercial notes.",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "scheduledAtIso": {
+          "type": "string",
+          "description": "ISO date-time of scheduled call/appointment or empty string.",
+          "minLength": 0,
+          "maxLength": 40
+        },
+        "reminderEnabled": {
+          "type": "boolean",
+          "description": "Whether browser/UI reminder notifications are enabled."
+        },
+        "completed": {
+          "type": "boolean",
+          "description": "Whether the scheduled interaction has been completed."
+        },
+        "createdAtIso": {
+          "type": "string",
+          "description": "ISO timestamp string for UI display.",
+          "minLength": 16,
+          "maxLength": 40
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest update."
+        }
+      },
+      "required": [
+        "numericId",
+        "leadDocId",
+        "advisorUid",
+        "advisorName",
+        "activityType",
+        "title",
+        "description",
+        "scheduledAtIso",
+        "reminderEnabled",
+        "completed",
+        "createdAtIso",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LeadAttachment": {
+      "title": "LeadAttachment",
+      "description": "Document or image attachment associated with a lead.",
+      "type": "object",
+      "properties": {
+        "numericId": {
+          "type": "integer",
+          "description": "Numeric attachment ID for UI compatibility."
+        },
+        "leadDocId": {
+          "type": "string",
+          "description": "Parent lead document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uploadedByUid": {
+          "type": "string",
+          "description": "UID of the staff member who uploaded the attachment.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uploadedBy": {
+          "type": "string",
+          "description": "Display name of the uploader.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Original filename.",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "MIME type of the file.",
+          "minLength": 3,
+          "maxLength": 100
+        },
+        "fileSize": {
+          "type": "integer",
+          "description": "Binary file size in bytes (max 700KB)."
+        },
+        "dataUrl": {
+          "type": "string",
+          "description": "Data URL representation of the file.",
+          "minLength": 10,
+          "maxLength": 950000
+        },
+        "caption": {
+          "type": "string",
+          "description": "Optional descriptive note.",
+          "minLength": 0,
+          "maxLength": 300
+        },
+        "createdAtIso": {
+          "type": "string",
+          "description": "ISO timestamp string for UI display.",
+          "minLength": 16,
+          "maxLength": 40
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable server timestamp."
+        }
+      },
+      "required": [
+        "numericId",
+        "leadDocId",
+        "uploadedByUid",
+        "uploadedBy",
+        "fileName",
+        "mimeType",
+        "fileSize",
+        "dataUrl",
+        "caption",
+        "createdAtIso",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminMember" },
+      "description": "Authorized CRM administrators and commercial advisors."
+    },
+    "/advisorProfiles/{profileId}": {
+      "schema": { "$ref": "#/entities/AdvisorProfile" },
+      "description": "Public commercial profile for Jesús Artahona and headquarters in CC Salvamall, Valencia."
+    },
+    "/portalAssets/{assetId}": {
+      "schema": { "$ref": "#/entities/PortalAsset" },
+      "description": "Customizable hero images for Vehículos, Motos, and Inmuebles."
+    },
+    "/calculatorConfigs/{configId}": {
+      "schema": { "$ref": "#/entities/CalculatorConfig" },
+      "description": "Financing calculator parameters for Autofin Venezuela plans."
+    },
+    "/leads/{leadId}": {
+      "schema": { "$ref": "#/entities/Lead" },
+      "description": "Master collection of customer leads containing PII isolated strictly to authorized staff."
+    },
+    "/leadLocks/{lockId}": {
+      "schema": { "$ref": "#/entities/LeadIdentifierLock" },
+      "description": "Atomic uniqueness locks preventing duplicate cedula, phone, or email registrations."
+    },
+    "/leads/{leadId}/activities/{activityId}": {
+      "schema": { "$ref": "#/entities/LeadActivity" },
+      "description": "Subcollection of calls, in-person appointments, SMS, WhatsApp, and notes for a lead."
+    },
+    "/leads/{leadId}/attachments/{attachmentId}": {
+      "schema": { "$ref": "#/entities/LeadAttachment" },
+      "description": "Subcollection of uploaded files and vehicle/property images for a lead."
+    }
+  }
+}

@@ -115,6 +115,7 @@ export interface PropertyRequestDTO {
 export interface LeadActivityDTO {
   id: number;
   leadId: number;
+  firestoreDocId?: string;
   advisorUid: string | null;
   advisorName: string | null;
   activityType: ActivityType | string;
@@ -129,6 +130,7 @@ export interface LeadActivityDTO {
 export interface LeadAttachmentDTO {
   id: number;
   leadId: number;
+  firestoreDocId?: string;
   fileName: string;
   mimeType: string;
   fileSize: number;
@@ -140,6 +142,7 @@ export interface LeadAttachmentDTO {
 
 export interface LeadRecordDTO {
   id: number;
+  firestoreDocId?: string;
   firstName: string;
   lastName: string;
   cedula: string;

@@ -14,7 +14,8 @@ import {
 import heroVehiculoImg from '../assets/images/autofin_hero_vehiculo_1793257817332.jpg';
 import heroMotoImg from '../assets/images/autofin_hero_moto_1793262763387.jpg';
 import heroInmuebleImg from '../assets/images/autofin_inmueble_comercial_1793257817601.jpg';
-import { apiFetch } from '../lib/api-url';
+import { apiFetch, tryBackendJson } from '../lib/api-url';
+import { createFirestoreLead, isDuplicatePermissionError } from '../lib/firestore-crm';
 import {
   DEFAULT_ADVISOR_PHOTO_URL,
   OFFICIAL_OFFICE_ADDRESS,
@@ -170,26 +171,61 @@ export function PublicLeadForm({
 
     setSubmitting(true);
     try {
-      const res =
+      const effectivePayload: CreatePublicLeadPayload = {
+        ...payload,
+        source: mode === 'crm' ? 'Asesor CRM' : 'Formulario Web',
+      };
+
+      // 1. Intentar sincronizar con servidor Express (envío de correo SMTP + respaldo SQL) si está disponible
+      const backendAttempt =
         mode === 'crm' && authFetch
-          ? await authFetch('/api/crm/leads', {
-              method: 'POST',
-              body: JSON.stringify({
-                ...payload,
-                source: 'Asesor CRM',
-              }),
-            })
-          : await apiFetch('/api/public/leads', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
-            });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'No se pudo procesar su solicitud.');
+          ? await tryBackendJson<LeadRecordDTO>(
+              '/api/crm/leads',
+              {
+                method: 'POST',
+                body: JSON.stringify(effectivePayload),
+              },
+              authFetch
+            )
+          : await tryBackendJson<LeadRecordDTO>(
+              '/api/public/leads',
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(effectivePayload),
+              },
+              apiFetch
+            );
+
+      if (backendAttempt.backendAvailable && !backendAttempt.ok) {
+        throw new Error(backendAttempt.error || 'No se pudo procesar su solicitud.');
       }
 
-      const createdLead = data as LeadRecordDTO;
+      // 2. Persistir atómicamente en Cloud Firestore (con bloqueo anti-duplicados de cédula, teléfono y correo)
+      let firestoreLead: LeadRecordDTO | null = null;
+      try {
+        firestoreLead = await createFirestoreLead(effectivePayload, {
+          forcedNumericId: backendAttempt.data?.id,
+          forcedCreatedAtIso: backendAttempt.data?.createdAt,
+        });
+      } catch (fsErr: unknown) {
+        if (!backendAttempt.backendAvailable) {
+          if (isDuplicatePermissionError(fsErr)) {
+            throw new Error(
+              'No se permiten registros duplicados: ya existe una solicitud registrada con esta Cédula, Teléfono o Correo Electrónico.'
+            );
+          }
+          throw fsErr;
+        }
+      }
+
+      const createdLead: LeadRecordDTO = firestoreLead
+        ? {
+            ...firestoreLead,
+            emailDelivery: backendAttempt.data?.emailDelivery,
+          }
+        : (backendAttempt.data as LeadRecordDTO);
+
       if (mode === 'crm') {
         if (onLeadSubmitted) {
           onLeadSubmitted(createdLead);

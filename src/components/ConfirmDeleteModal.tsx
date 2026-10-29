@@ -90,7 +90,7 @@ export function ConfirmDeleteModal({
                 Confirmar Eliminación de Cliente
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Esta acción eliminará el expediente de forma permanente en Cloud SQL PostgreSQL
+                Esta acción eliminará el expediente de forma permanente en Firebase Cloud Firestore
               </p>
             </div>
           </div>

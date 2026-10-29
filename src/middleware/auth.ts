@@ -1,7 +1,10 @@
 import type { Request, Response, NextFunction } from 'express';
 import { verifyAdminSessionToken } from '../lib/admin-auth.ts';
+import { adminAuth } from '../lib/firebase-admin.ts';
 import { getUserByUid } from '../db/repository.ts';
 import type { AdminRole } from '../shared/types.ts';
+
+export const BOOTSTRAPPED_ADMIN_EMAIL = 'josburflor@gmail.com';
 
 export interface AuthenticatedAdvisor {
   uid: string;
@@ -22,27 +25,63 @@ export const requireAuth = async (
 ) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'No autorizado: Debe iniciar sesión con usuario y clave.' });
+    res.status(401).json({ error: 'No autorizado: Debe iniciar sesión en el panel administrativo.' });
     return;
   }
 
   const token = authHeader.split('Bearer ')[1];
 
   try {
-    if (!token.startsWith('autofin_adm.')) {
-      res.status(401).json({ error: 'Credencial no autorizada. Inicie sesión con usuario y clave.' });
+    if (token.startsWith('autofin_adm.')) {
+      const claims = verifyAdminSessionToken(token);
+      if (!claims) {
+        res.status(401).json({ error: 'Sesión cerrada o expirada. Inicie sesión nuevamente.' });
+        return;
+      }
+
+      const dbUser = await getUserByUid(claims.uid);
+      if (!dbUser || !dbUser.isActive) {
+        res.status(401).json({ error: 'Cuenta de administrador inactiva o no autorizada.' });
+        return;
+      }
+
+      req.user = {
+        uid: dbUser.uid,
+        email: dbUser.email,
+        username: dbUser.username,
+        name: dbUser.displayName || dbUser.username || dbUser.email.split('@')[0],
+        role: dbUser.role,
+      };
+      next();
       return;
     }
 
-    const claims = verifyAdminSessionToken(token);
-    if (!claims) {
-      res.status(401).json({ error: 'Sesión cerrada o expirada. Inicie sesión nuevamente.' });
+    // Verificación de Firebase ID Token para sesión unificada con Cloud Firestore
+    const decoded = await adminAuth.verifyIdToken(token);
+    if (!decoded.email || decoded.email_verified !== true) {
+      res.status(401).json({ error: 'Se requiere una cuenta Firebase con correo verificado.' });
       return;
     }
 
-    const dbUser = await getUserByUid(claims.uid);
+    const cleanEmail = decoded.email.trim().toLowerCase();
+    const dbUser = await getUserByUid(decoded.uid);
+
+    if (cleanEmail === BOOTSTRAPPED_ADMIN_EMAIL) {
+      req.user = {
+        uid: decoded.uid,
+        email: cleanEmail,
+        username: 'admin-firebase',
+        name: decoded.name || dbUser?.displayName || 'Jesús Artahona',
+        role: 'super_admin',
+      };
+      next();
+      return;
+    }
+
     if (!dbUser || !dbUser.isActive) {
-      res.status(401).json({ error: 'Cuenta de administrador inactiva o no autorizada.' });
+      res.status(403).json({
+        error: 'Su cuenta Firebase no está autorizada en el directorio de administradores.',
+      });
       return;
     }
 
@@ -50,7 +89,7 @@ export const requireAuth = async (
       uid: dbUser.uid,
       email: dbUser.email,
       username: dbUser.username,
-      name: dbUser.displayName || dbUser.username || dbUser.email.split('@')[0],
+      name: dbUser.displayName || decoded.name || dbUser.email.split('@')[0],
       role: dbUser.role,
     };
     next();

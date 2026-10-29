@@ -1,0 +1,770 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default-Deny Catch-All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // Hardened Global Primitives
+    // =========================================================================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    // Bootstrapped runtime owner (zero DB reads; requires verified email)
+    function isBootstrappedAdmin() {
+      return isVerified() && request.auth.token.email == 'josburflor@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerified() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.isActive == true &&
+        (
+          get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'super_admin' ||
+          get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin'
+        )
+      );
+    }
+
+    function isActiveAdvisor() {
+      return isBootstrappedAdmin() || (
+        isVerified() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.isActive == true
+      );
+    }
+
+    // =========================================================================
+    // Entity Validation Blueprints (Synchronized with firebase-blueprint.json)
+    // =========================================================================
+    function isValidAdminMember(data) {
+      return data.keys().hasAll([
+          'uid',
+          'email',
+          'displayName',
+          'role',
+          'isActive',
+          'createdByUid',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'uid',
+          'email',
+          'displayName',
+          'role',
+          'isActive',
+          'createdByUid',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 160 && data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$') &&
+        data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 120 &&
+        data.role is string && data.role.size() >= 5 && data.role.size() <= 20 &&
+        (data.role == 'super_admin' || data.role == 'admin' || data.role == 'asesor') &&
+        data.isActive is bool &&
+        data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128 && data.createdByUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAdvisorProfile(data) {
+      return data.keys().hasAll([
+          'advisorName',
+          'advisorTitle',
+          'photoUrl',
+          'welcomeBio',
+          'officeAddress',
+          'heroTitle',
+          'heroSubtitle',
+          'updatedByUid',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'advisorName',
+          'advisorTitle',
+          'photoUrl',
+          'welcomeBio',
+          'officeAddress',
+          'heroTitle',
+          'heroSubtitle',
+          'updatedByUid',
+          'updatedAt'
+        ]) &&
+        data.advisorName is string && data.advisorName.size() >= 2 && data.advisorName.size() <= 120 &&
+        data.advisorTitle is string && data.advisorTitle.size() >= 2 && data.advisorTitle.size() <= 160 &&
+        data.photoUrl is string && data.photoUrl.size() >= 5 && data.photoUrl.size() <= 300000 &&
+        data.welcomeBio is string && data.welcomeBio.size() >= 5 && data.welcomeBio.size() <= 600 &&
+        data.officeAddress is string && data.officeAddress.size() >= 5 && data.officeAddress.size() <= 200 &&
+        data.heroTitle is string && data.heroTitle.size() >= 5 && data.heroTitle.size() <= 180 &&
+        data.heroSubtitle is string && data.heroSubtitle.size() >= 3 && data.heroSubtitle.size() <= 160 &&
+        data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 && data.updatedByUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.updatedByUid == request.auth.uid &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPortalAsset(data) {
+      return data.keys().hasAll([
+          'assetKey',
+          'dataUrl',
+          'updatedByUid',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'assetKey',
+          'dataUrl',
+          'updatedByUid',
+          'updatedAt'
+        ]) &&
+        data.assetKey is string && data.assetKey.size() >= 4 && data.assetKey.size() <= 16 &&
+        (data.assetKey == 'vehiculo' || data.assetKey == 'moto' || data.assetKey == 'inmueble') &&
+        data.dataUrl is string && data.dataUrl.size() >= 0 && data.dataUrl.size() <= 900000 &&
+        data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 && data.updatedByUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.updatedByUid == request.auth.uid &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCalculatorConfig(data) {
+      return data.keys().hasAll([
+          'defaultAssetAmount',
+          'baseInstallments',
+          'adminFee',
+          'planGarantizado1Months',
+          'planGarantizado2Months',
+          'planPromoMonths',
+          'planAhorroMonths',
+          'fastDelivery1Pct',
+          'fastDelivery2Pct',
+          'promo4Plus8Pct',
+          'ahorroFastPct',
+          'updatedByUid',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'defaultAssetAmount',
+          'baseInstallments',
+          'adminFee',
+          'planGarantizado1Months',
+          'planGarantizado2Months',
+          'planPromoMonths',
+          'planAhorroMonths',
+          'fastDelivery1Pct',
+          'fastDelivery2Pct',
+          'promo4Plus8Pct',
+          'ahorroFastPct',
+          'updatedByUid',
+          'updatedAt'
+        ]) &&
+        (data.defaultAssetAmount is int || data.defaultAssetAmount is float) && data.defaultAssetAmount > 0 && data.defaultAssetAmount <= 100000000 &&
+        data.baseInstallments is int && data.baseInstallments >= 1 && data.baseInstallments <= 360 &&
+        (data.adminFee is int || data.adminFee is float) && data.adminFee >= 0 && data.adminFee <= 1000000 &&
+        data.planGarantizado1Months is int && data.planGarantizado1Months >= 1 && data.planGarantizado1Months <= 360 &&
+        data.planGarantizado2Months is int && data.planGarantizado2Months >= 1 && data.planGarantizado2Months <= 360 &&
+        data.planPromoMonths is int && data.planPromoMonths >= 1 && data.planPromoMonths <= 360 &&
+        data.planAhorroMonths is int && data.planAhorroMonths >= 1 && data.planAhorroMonths <= 360 &&
+        (data.fastDelivery1Pct is int || data.fastDelivery1Pct is float) && data.fastDelivery1Pct >= 0 && data.fastDelivery1Pct <= 100 &&
+        (data.fastDelivery2Pct is int || data.fastDelivery2Pct is float) && data.fastDelivery2Pct >= 0 && data.fastDelivery2Pct <= 100 &&
+        (data.promo4Plus8Pct is int || data.promo4Plus8Pct is float) && data.promo4Plus8Pct >= 0 && data.promo4Plus8Pct <= 100 &&
+        (data.ahorroFastPct is int || data.ahorroFastPct is float) && data.ahorroFastPct >= 0 && data.ahorroFastPct <= 100 &&
+        data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 && data.updatedByUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.updatedByUid == request.auth.uid &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLead(data) {
+      return data.keys().hasAll([
+          'numericId',
+          'docId',
+          'firstName',
+          'lastName',
+          'cedula',
+          'phone',
+          'email',
+          'city',
+          'availableAmount',
+          'interestType',
+          'status',
+          'source',
+          'nextCallAtIso',
+          'assignedAdvisorUid',
+          'vehicleCondition',
+          'vehicleYear',
+          'vehicleBrand',
+          'vehicleModel',
+          'estimatedTotalAmount',
+          'selectedPlan',
+          'propertySeenConfirmed',
+          'propertyCategory',
+          'locationNotes',
+          'cedulaLockId',
+          'phoneLockId',
+          'emailLockId',
+          'createdAtIso',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'numericId',
+          'docId',
+          'firstName',
+          'lastName',
+          'cedula',
+          'phone',
+          'email',
+          'city',
+          'availableAmount',
+          'interestType',
+          'status',
+          'source',
+          'nextCallAtIso',
+          'assignedAdvisorUid',
+          'vehicleCondition',
+          'vehicleYear',
+          'vehicleBrand',
+          'vehicleModel',
+          'estimatedTotalAmount',
+          'selectedPlan',
+          'propertySeenConfirmed',
+          'propertyCategory',
+          'locationNotes',
+          'cedulaLockId',
+          'phoneLockId',
+          'emailLockId',
+          'createdAtIso',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.numericId is int && data.numericId > 0 &&
+        data.docId is string && data.docId.size() >= 1 && data.docId.size() <= 128 && data.docId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.firstName is string && data.firstName.size() >= 1 && data.firstName.size() <= 80 &&
+        data.lastName is string && data.lastName.size() >= 1 && data.lastName.size() <= 80 &&
+        data.cedula is string && data.cedula.size() >= 3 && data.cedula.size() <= 24 &&
+        data.phone is string && data.phone.size() >= 6 && data.phone.size() <= 24 &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 160 && data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$') &&
+        data.city is string && data.city.size() >= 2 && data.city.size() <= 80 &&
+        (data.availableAmount is int || data.availableAmount is float) && data.availableAmount >= 0 && data.availableAmount <= 100000000 &&
+        data.interestType is string && data.interestType.size() >= 4 && data.interestType.size() <= 16 &&
+        (data.interestType == 'vehiculo' || data.interestType == 'moto' || data.interestType == 'inmueble') &&
+        data.status is string && data.status.size() >= 5 && data.status.size() <= 24 &&
+        (
+          data.status == 'Nuevo' ||
+          data.status == 'Contactado' ||
+          data.status == 'Cita Presencial' ||
+          data.status == 'En Financiamiento' ||
+          data.status == 'Cerrado' ||
+          data.status == 'Perdido'
+        ) &&
+        data.source is string && data.source.size() >= 6 && data.source.size() <= 30 &&
+        (data.source == 'Formulario Web' || data.source == 'Asesor CRM') &&
+        data.nextCallAtIso is string && data.nextCallAtIso.size() >= 0 && data.nextCallAtIso.size() <= 40 &&
+        data.assignedAdvisorUid is string && data.assignedAdvisorUid.size() >= 0 && data.assignedAdvisorUid.size() <= 128 &&
+        data.vehicleCondition is string && data.vehicleCondition.size() >= 0 && data.vehicleCondition.size() <= 10 &&
+        (data.vehicleCondition == '' || data.vehicleCondition == 'Nuevo' || data.vehicleCondition == 'Usado') &&
+        data.vehicleYear is int && (data.vehicleYear == 0 || (data.vehicleYear >= 1990 && data.vehicleYear <= 2030)) &&
+        data.vehicleBrand is string && data.vehicleBrand.size() >= 0 && data.vehicleBrand.size() <= 80 &&
+        data.vehicleModel is string && data.vehicleModel.size() >= 0 && data.vehicleModel.size() <= 100 &&
+        (data.estimatedTotalAmount is int || data.estimatedTotalAmount is float) && data.estimatedTotalAmount >= 0 && data.estimatedTotalAmount <= 100000000 &&
+        data.selectedPlan is string && data.selectedPlan.size() >= 0 && data.selectedPlan.size() <= 120 &&
+        data.propertySeenConfirmed is bool &&
+        data.propertyCategory is string && data.propertyCategory.size() >= 0 && data.propertyCategory.size() <= 100 &&
+        data.locationNotes is string && data.locationNotes.size() >= 0 && data.locationNotes.size() <= 500 &&
+        data.cedulaLockId is string && data.cedulaLockId.size() >= 5 && data.cedulaLockId.size() <= 64 && data.cedulaLockId.matches('^ced_[a-zA-Z0-9_\\-]+$') &&
+        data.phoneLockId is string && data.phoneLockId.size() >= 5 && data.phoneLockId.size() <= 64 && data.phoneLockId.matches('^tel_[a-zA-Z0-9_\\-]+$') &&
+        data.emailLockId is string && data.emailLockId.size() >= 5 && data.emailLockId.size() <= 128 && data.emailLockId.matches('^eml_[a-zA-Z0-9_\\-]+$') &&
+        data.createdAtIso is string && data.createdAtIso.size() >= 16 && data.createdAtIso.size() <= 40 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLeadLock(data) {
+      return data.keys().hasAll(['lockId', 'lockType', 'leadDocId', 'createdAt']) &&
+        data.keys().hasOnly(['lockId', 'lockType', 'leadDocId', 'createdAt']) &&
+        data.lockId is string && data.lockId.size() >= 5 && data.lockId.size() <= 128 && data.lockId.matches('^(ced|tel|eml)_[a-zA-Z0-9_\\-]+$') &&
+        data.lockType is string && data.lockType.size() >= 5 && data.lockType.size() <= 10 &&
+        (data.lockType == 'cedula' || data.lockType == 'phone' || data.lockType == 'email') &&
+        data.leadDocId is string && data.leadDocId.size() >= 1 && data.leadDocId.size() <= 128 && data.leadDocId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidLeadActivity(data) {
+      return data.keys().hasAll([
+          'numericId',
+          'leadDocId',
+          'advisorUid',
+          'advisorName',
+          'activityType',
+          'title',
+          'description',
+          'scheduledAtIso',
+          'reminderEnabled',
+          'completed',
+          'createdAtIso',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'numericId',
+          'leadDocId',
+          'advisorUid',
+          'advisorName',
+          'activityType',
+          'title',
+          'description',
+          'scheduledAtIso',
+          'reminderEnabled',
+          'completed',
+          'createdAtIso',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.numericId is int && data.numericId > 0 &&
+        data.leadDocId is string && data.leadDocId.size() >= 1 && data.leadDocId.size() <= 128 && data.leadDocId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.advisorUid is string && data.advisorUid.size() >= 1 && data.advisorUid.size() <= 128 && data.advisorUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.advisorUid == request.auth.uid &&
+        data.advisorName is string && data.advisorName.size() >= 1 && data.advisorName.size() <= 120 &&
+        data.activityType is string && data.activityType.size() >= 3 && data.activityType.size() <= 24 &&
+        (
+          data.activityType == 'llamada' ||
+          data.activityType == 'cita_presencial' ||
+          data.activityType == 'nota' ||
+          data.activityType == 'whatsapp' ||
+          data.activityType == 'sms' ||
+          data.activityType == 'correo' ||
+          data.activityType == 'cotizacion'
+        ) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+        data.description is string && data.description.size() >= 1 && data.description.size() <= 2000 &&
+        data.scheduledAtIso is string && data.scheduledAtIso.size() >= 0 && data.scheduledAtIso.size() <= 40 &&
+        data.reminderEnabled is bool &&
+        data.completed is bool &&
+        data.createdAtIso is string && data.createdAtIso.size() >= 16 && data.createdAtIso.size() <= 40 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLeadAttachment(data) {
+      return data.keys().hasAll([
+          'numericId',
+          'leadDocId',
+          'uploadedByUid',
+          'uploadedBy',
+          'fileName',
+          'mimeType',
+          'fileSize',
+          'dataUrl',
+          'caption',
+          'createdAtIso',
+          'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'numericId',
+          'leadDocId',
+          'uploadedByUid',
+          'uploadedBy',
+          'fileName',
+          'mimeType',
+          'fileSize',
+          'dataUrl',
+          'caption',
+          'createdAtIso',
+          'createdAt'
+        ]) &&
+        data.numericId is int && data.numericId > 0 &&
+        data.leadDocId is string && data.leadDocId.size() >= 1 && data.leadDocId.size() <= 128 && data.leadDocId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.uploadedByUid is string && data.uploadedByUid.size() >= 1 && data.uploadedByUid.size() <= 128 && data.uploadedByUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.uploadedByUid == request.auth.uid &&
+        data.uploadedBy is string && data.uploadedBy.size() >= 1 && data.uploadedBy.size() <= 120 &&
+        data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 180 &&
+        data.mimeType is string && data.mimeType.size() >= 3 && data.mimeType.size() <= 100 &&
+        data.fileSize is int && data.fileSize >= 1 && data.fileSize <= 700000 &&
+        data.dataUrl is string && data.dataUrl.size() >= 10 && data.dataUrl.size() <= 950000 &&
+        data.caption is string && data.caption.size() >= 0 && data.caption.size() <= 300 &&
+        data.createdAtIso is string && data.createdAtIso.size() >= 16 && data.createdAtIso.size() <= 40 &&
+        data.createdAt is timestamp;
+    }
+
+    // =========================================================================
+    // Collection 1: /admins/{adminUid}
+    // =========================================================================
+    match /admins/{adminUid} {
+      allow get: if isVerified() && isValidId(adminUid) && (request.auth.uid == adminUid || isAdmin());
+      allow list: if isBootstrappedAdmin() || (isVerified() && resource.data.uid == request.auth.uid);
+
+      allow create: if isVerified() &&
+        isValidId(adminUid) &&
+        isValidAdminMember(incoming()) &&
+        incoming().uid == adminUid &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+
+      allow update: if isVerified() &&
+        isValidId(adminUid) &&
+        isValidAdminMember(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().email == existing().email &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() &&
+          (
+            // Action: Toggle Status or Role (cannot self-suspend or self-demote)
+            (
+              request.auth.uid != adminUid &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['isActive', 'role', 'displayName', 'updatedAt'])
+            ) ||
+            // Action: Update Display Name on own profile
+            (
+              request.auth.uid == adminUid &&
+              incoming().isActive == existing().isActive &&
+              incoming().role == existing().role &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt'])
+            )
+          )
+        );
+
+      allow delete: if isVerified() &&
+        isValidId(adminUid) &&
+        request.auth.uid != adminUid &&
+        isBootstrappedAdmin();
+    }
+
+    // =========================================================================
+    // Collection 2: /advisorProfiles/{profileId}
+    // =========================================================================
+    match /advisorProfiles/{profileId} {
+      // Single public branding document ('main') — contains zero customer PII
+      allow get: if isValidId(profileId) && profileId == 'main';
+      allow list: if false;
+
+      allow create: if isVerified() &&
+        isValidId(profileId) &&
+        profileId == 'main' &&
+        isValidAdvisorProfile(incoming()) &&
+        incoming().updatedAt == request.time &&
+        isActiveAdvisor();
+
+      allow update: if isVerified() &&
+        isValidId(profileId) &&
+        profileId == 'main' &&
+        isValidAdvisorProfile(incoming()) &&
+        incoming().updatedAt == request.time &&
+        isActiveAdvisor() &&
+        (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'advisorName',
+            'advisorTitle',
+            'photoUrl',
+            'welcomeBio',
+            'officeAddress',
+            'heroTitle',
+            'heroSubtitle',
+            'updatedByUid',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // Collection 3: /portalAssets/{assetId}
+    // =========================================================================
+    match /portalAssets/{assetId} {
+      allow get: if isValidId(assetId) &&
+        (assetId == 'vehiculo' || assetId == 'moto' || assetId == 'inmueble');
+      allow list: if false;
+
+      allow create: if isVerified() &&
+        isValidId(assetId) &&
+        (assetId == 'vehiculo' || assetId == 'moto' || assetId == 'inmueble') &&
+        isValidPortalAsset(incoming()) &&
+        incoming().assetKey == assetId &&
+        incoming().updatedAt == request.time &&
+        isActiveAdvisor();
+
+      allow update: if isVerified() &&
+        isValidId(assetId) &&
+        (assetId == 'vehiculo' || assetId == 'moto' || assetId == 'inmueble') &&
+        isValidPortalAsset(incoming()) &&
+        incoming().assetKey == existing().assetKey &&
+        incoming().updatedAt == request.time &&
+        isActiveAdvisor() &&
+        (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['dataUrl', 'updatedByUid', 'updatedAt'])
+        );
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // Collection 4: /calculatorConfigs/{configId}
+    // =========================================================================
+    match /calculatorConfigs/{configId} {
+      allow get: if isValidId(configId) && configId == 'main';
+      allow list: if false;
+
+      allow create: if isVerified() &&
+        isValidId(configId) &&
+        configId == 'main' &&
+        isValidCalculatorConfig(incoming()) &&
+        incoming().updatedAt == request.time &&
+        isActiveAdvisor();
+
+      allow update: if isVerified() &&
+        isValidId(configId) &&
+        configId == 'main' &&
+        isValidCalculatorConfig(incoming()) &&
+        incoming().updatedAt == request.time &&
+        isActiveAdvisor() &&
+        (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'defaultAssetAmount',
+            'baseInstallments',
+            'adminFee',
+            'planGarantizado1Months',
+            'planGarantizado2Months',
+            'planPromoMonths',
+            'planAhorroMonths',
+            'fastDelivery1Pct',
+            'fastDelivery2Pct',
+            'promo4Plus8Pct',
+            'ahorroFastPct',
+            'updatedByUid',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // Collection 5: /leads/{leadId} (Strict PII Isolation + Atomic Locks)
+    // =========================================================================
+    match /leads/{leadId} {
+      allow get: if isVerified() && isValidId(leadId) && isActiveAdvisor();
+      // Cost-optimized list: zero get()/exists() calls inside allow list
+      allow list: if isBootstrappedAdmin() || (
+        isVerified() && resource.data.assignedAdvisorUid == request.auth.uid
+      );
+
+      allow create: if isValidId(leadId) &&
+        isValidLead(incoming()) &&
+        incoming().docId == leadId &&
+        incoming().status == 'Nuevo' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (
+          // Public Web Capture Intake (requires atomic uniqueness locks)
+          (
+            incoming().source == 'Formulario Web' &&
+            incoming().assignedAdvisorUid == ''
+          ) ||
+          // Authenticated Advisor CRM Intake
+          (
+            isVerified() &&
+            incoming().source == 'Asesor CRM' &&
+            (incoming().assignedAdvisorUid == '' || incoming().assignedAdvisorUid == request.auth.uid) &&
+            isActiveAdvisor()
+          )
+        ) &&
+        getAfter(/databases/$(database)/documents/leadLocks/$(incoming().cedulaLockId)).data.leadDocId == leadId &&
+        getAfter(/databases/$(database)/documents/leadLocks/$(incoming().phoneLockId)).data.leadDocId == leadId &&
+        getAfter(/databases/$(database)/documents/leadLocks/$(incoming().emailLockId)).data.leadDocId == leadId;
+
+      allow update: if isVerified() &&
+        isValidId(leadId) &&
+        isValidLead(incoming()) &&
+        incoming().docId == existing().docId &&
+        incoming().numericId == existing().numericId &&
+        incoming().source == existing().source &&
+        incoming().interestType == existing().interestType &&
+        incoming().createdAtIso == existing().createdAtIso &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        // Terminal State Locking: 'Cerrado' & 'Perdido' locked for non-admins
+        ((existing().status != 'Cerrado' && existing().status != 'Perdido') || isAdmin()) &&
+        isActiveAdvisor() &&
+        (
+          (
+            isAdmin() &&
+            getAfter(/databases/$(database)/documents/leadLocks/$(incoming().cedulaLockId)).data.leadDocId == leadId &&
+            getAfter(/databases/$(database)/documents/leadLocks/$(incoming().phoneLockId)).data.leadDocId == leadId &&
+            getAfter(/databases/$(database)/documents/leadLocks/$(incoming().emailLockId)).data.leadDocId == leadId
+          ) ||
+          // Action 1: Commercial Pipeline & Follow-up Update (keeps identifiers immutable)
+          (
+            incoming().cedulaLockId == existing().cedulaLockId &&
+            incoming().phoneLockId == existing().phoneLockId &&
+            incoming().emailLockId == existing().emailLockId &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status',
+              'nextCallAtIso',
+              'assignedAdvisorUid',
+              'availableAmount',
+              'estimatedTotalAmount',
+              'selectedPlan',
+              'updatedAt'
+            ])
+          ) ||
+          // Action 2: Contact Profile Correction (requires valid locks bound to this leadId)
+          (
+            getAfter(/databases/$(database)/documents/leadLocks/$(incoming().cedulaLockId)).data.leadDocId == leadId &&
+            getAfter(/databases/$(database)/documents/leadLocks/$(incoming().phoneLockId)).data.leadDocId == leadId &&
+            getAfter(/databases/$(database)/documents/leadLocks/$(incoming().emailLockId)).data.leadDocId == leadId &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'firstName',
+              'lastName',
+              'cedula',
+              'phone',
+              'email',
+              'city',
+              'availableAmount',
+              'status',
+              'nextCallAtIso',
+              'assignedAdvisorUid',
+              'estimatedTotalAmount',
+              'selectedPlan',
+              'cedulaLockId',
+              'phoneLockId',
+              'emailLockId',
+              'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isVerified() && isValidId(leadId) && isActiveAdvisor();
+
+      // =======================================================================
+      // Subcollection 5A: /leads/{leadId}/activities/{activityId} (Master Gate)
+      // =======================================================================
+      match /activities/{activityId} {
+        allow get: if isVerified() &&
+          isValidId(leadId) &&
+          isValidId(activityId) &&
+          exists(/databases/$(database)/documents/leads/$(leadId)) &&
+          isActiveAdvisor();
+
+        // Zero get()/exists() inside allow list
+        allow list: if isBootstrappedAdmin() || (
+          isVerified() && resource.data.advisorUid == request.auth.uid
+        );
+
+        allow create: if isVerified() &&
+          isValidId(leadId) &&
+          isValidId(activityId) &&
+          isValidLeadActivity(incoming()) &&
+          incoming().leadDocId == leadId &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/leads/$(leadId)) &&
+          isActiveAdvisor();
+
+        allow update: if isVerified() &&
+          isValidId(leadId) &&
+          isValidId(activityId) &&
+          isValidLeadActivity(incoming()) &&
+          incoming().numericId == existing().numericId &&
+          incoming().leadDocId == existing().leadDocId &&
+          incoming().advisorUid == existing().advisorUid &&
+          incoming().createdAtIso == existing().createdAtIso &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/leads/$(leadId)) &&
+          isActiveAdvisor() &&
+          (
+            isAdmin() ||
+            (
+              existing().advisorUid == request.auth.uid &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['completed', 'updatedAt'])
+            )
+          );
+
+        allow delete: if isVerified() &&
+          isValidId(leadId) &&
+          isValidId(activityId) &&
+          exists(/databases/$(database)/documents/leads/$(leadId)) &&
+          isActiveAdvisor();
+      }
+
+      // =======================================================================
+      // Subcollection 5B: /leads/{leadId}/attachments/{attachmentId} (Master Gate)
+      // =======================================================================
+      match /attachments/{attachmentId} {
+        allow get: if isVerified() &&
+          isValidId(leadId) &&
+          isValidId(attachmentId) &&
+          exists(/databases/$(database)/documents/leads/$(leadId)) &&
+          isActiveAdvisor();
+
+        // Zero get()/exists() inside allow list
+        allow list: if isBootstrappedAdmin() || (
+          isVerified() && resource.data.uploadedByUid == request.auth.uid
+        );
+
+        allow create: if isVerified() &&
+          isValidId(leadId) &&
+          isValidId(attachmentId) &&
+          isValidLeadAttachment(incoming()) &&
+          incoming().leadDocId == leadId &&
+          incoming().createdAt == request.time &&
+          exists(/databases/$(database)/documents/leads/$(leadId)) &&
+          isActiveAdvisor();
+
+        allow update: if false;
+
+        allow delete: if isVerified() &&
+          isValidId(leadId) &&
+          isValidId(attachmentId) &&
+          exists(/databases/$(database)/documents/leads/$(leadId)) &&
+          isActiveAdvisor();
+      }
+    }
+
+    // =========================================================================
+    // Collection 6: /leadLocks/{lockId} (Anti-Duplicate Identifier Locks)
+    // =========================================================================
+    match /leadLocks/{lockId} {
+      allow get: if isVerified() && isValidId(lockId) && isAdmin();
+      allow list: if false;
+
+      allow create: if isValidId(lockId) &&
+        isValidLeadLock(incoming()) &&
+        incoming().lockId == lockId &&
+        incoming().createdAt == request.time &&
+        existsAfter(/databases/$(database)/documents/leads/$(incoming().leadDocId));
+
+      // Immutable: prevents overwriting existing locks (blocks duplicate cedula/phone/email)
+      allow update: if false;
+
+      allow delete: if isVerified() && isValidId(lockId) && isActiveAdvisor();
+    }
+  }
+}

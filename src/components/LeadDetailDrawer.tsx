@@ -335,8 +335,15 @@ export function LeadDetailDrawer({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 6 * 1024 * 1024) {
-      setFeedbackMsg('El archivo supera el límite de 6 MB.');
+    const isImage = file.type.startsWith('image/');
+    if (!isImage && file.size > 680 * 1024) {
+      setFeedbackMsg('Para documentos PDF o archivos no comprimibles el límite en la nube es de 680 KB.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setFeedbackMsg('El archivo supera el límite máximo permitido de 8 MB.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
@@ -345,14 +352,55 @@ export function LeadDetailDrawer({
     const reader = new FileReader();
     reader.onload = async () => {
       try {
-        const dataUrl = String(reader.result || '');
+        let dataUrl = String(reader.result || '');
+        let finalSize = file.size;
+        let finalMime = file.type || 'application/octet-stream';
+
+        if (isImage && (file.size > 620 * 1024 || dataUrl.length > 880_000)) {
+          const compressed = await new Promise<{ url: string; bytes: number }>((resolve, reject) => {
+            const img = new Image();
+            img.onerror = () => reject(new Error('Imagen inválida.'));
+            img.onload = () => {
+              const maxDim = 1280;
+              let w = img.width;
+              let h = img.height;
+              if (w > maxDim || h > maxDim) {
+                const ratio = Math.min(maxDim / w, maxDim / h);
+                w = Math.round(w * ratio);
+                h = Math.round(h * ratio);
+              }
+              const canvas = document.createElement('canvas');
+              canvas.width = w;
+              canvas.height = h;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) {
+                reject(new Error('No se pudo comprimir la imagen.'));
+                return;
+              }
+              ctx.drawImage(img, 0, 0, w, h);
+              let q = 0.78;
+              let out = canvas.toDataURL('image/jpeg', q);
+              while (out.length > 880_000 && q > 0.4) {
+                q -= 0.1;
+                out = canvas.toDataURL('image/jpeg', q);
+              }
+              const idx = out.indexOf(',');
+              const b64 = idx >= 0 ? out.slice(idx + 1) : '';
+              resolve({ url: out, bytes: Math.max(1, Math.round((b64.length * 3) / 4)) });
+            };
+            img.src = dataUrl;
+          });
+          dataUrl = compressed.url;
+          finalSize = compressed.bytes;
+          finalMime = 'image/jpeg';
+        }
+
         await onUploadAttachment(lead.id, {
-          fileName: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          fileSize: file.size,
+          fileName: file.name.slice(0, 180),
+          mimeType: finalMime,
+          fileSize: finalSize,
           dataUrl,
-          caption:
-            attachmentCaption.trim() || `Adjunto del expediente: ${file.name}`,
+          caption: (attachmentCaption.trim() || `Adjunto del expediente: ${file.name}`).slice(0, 300),
         });
         setAttachmentCaption('');
         if (fileInputRef.current) fileInputRef.current.value = '';

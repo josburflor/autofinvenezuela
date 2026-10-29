@@ -14,6 +14,7 @@ import {
   type CalculatorSettingsDTO,
   type EmailSettingsDTO,
 } from '../shared/types';
+import { tryBackendJson } from '../lib/api-url';
 import { AdvisorProfileEditor } from './AdvisorProfileEditor';
 import { FinancingCalculator } from './FinancingCalculator';
 
@@ -56,23 +57,23 @@ export function PortalSettingsPanel({
   const [emailSuccess, setEmailSuccess] = useState<string | null>(null);
 
   const loadEmailConfig = useCallback(async () => {
-    try {
-      const res = await authFetch('/api/crm/email-settings');
-      if (!res.ok) return;
-      const data = (await res.json()) as EmailSettingsDTO;
-      setEmailCfg(data);
-      setEnabled(data.enabled);
-      setSmtpHost(data.smtpHost || 'smtp.gmail.com');
-      setSmtpPort(String(data.smtpPort || 465));
-      setSmtpSecure(data.smtpSecure);
-      setSmtpUser(data.smtpUser || '');
-      setSenderName(data.senderName || `Autofin Venezuela · ${advisorProfile.advisorName}`);
-      setReplyToEmail(data.replyToEmail || '');
-      setAdvisorNotifyEmail(data.advisorNotifyEmail || '');
-      setSendCopyToAdvisor(data.sendCopyToAdvisor);
-    } catch {
-      // ignore initial load error
-    }
+    const res = await tryBackendJson<EmailSettingsDTO>(
+      '/api/crm/email-settings',
+      undefined,
+      authFetch
+    );
+    if (!res.ok || !res.data) return;
+    const data = res.data;
+    setEmailCfg(data);
+    setEnabled(data.enabled);
+    setSmtpHost(data.smtpHost || 'smtp.gmail.com');
+    setSmtpPort(String(data.smtpPort || 465));
+    setSmtpSecure(data.smtpSecure);
+    setSmtpUser(data.smtpUser || '');
+    setSenderName(data.senderName || `Autofin Venezuela · ${advisorProfile.advisorName}`);
+    setReplyToEmail(data.replyToEmail || '');
+    setAdvisorNotifyEmail(data.advisorNotifyEmail || '');
+    setSendCopyToAdvisor(data.sendCopyToAdvisor);
   }, [authFetch, advisorProfile.advisorName]);
 
   useEffect(() => {
@@ -85,30 +86,36 @@ export function PortalSettingsPanel({
     setEmailError(null);
     setEmailSuccess(null);
     try {
-      const res = await authFetch('/api/crm/email-settings', {
-        method: 'PUT',
-        body: JSON.stringify({
-          enabled,
-          smtpHost,
-          smtpPort: Number(smtpPort) || 465,
-          smtpSecure,
-          smtpUser,
-          ...(smtpPass.trim() ? { smtpPass: smtpPass.trim() } : {}),
-          senderName,
-          replyToEmail,
-          advisorNotifyEmail,
-          sendCopyToAdvisor,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'No se pudo guardar la configuración de correo.');
-      }
-      setEmailCfg(data as EmailSettingsDTO);
-      setSmtpPass('');
-      setEmailSuccess(
-        'Configuración de correo automático guardada correctamente en PostgreSQL.'
+      const res = await tryBackendJson<EmailSettingsDTO>(
+        '/api/crm/email-settings',
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            enabled,
+            smtpHost,
+            smtpPort: Number(smtpPort) || 465,
+            smtpSecure,
+            smtpUser,
+            ...(smtpPass.trim() ? { smtpPass: smtpPass.trim() } : {}),
+            senderName,
+            replyToEmail,
+            advisorNotifyEmail,
+            sendCopyToAdvisor,
+          }),
+        },
+        authFetch
       );
+      if (!res.backendAvailable) {
+        throw new Error(
+          'El despacho SMTP requiere servidor Express conectado (VITE_API_ORIGIN). Su portal e imágenes Hero y calculadora sí están activos en Firebase Cloud Firestore.'
+        );
+      }
+      if (!res.ok || !res.data) {
+        throw new Error(res.error || 'No se pudo guardar la configuración de correo.');
+      }
+      setEmailCfg(res.data);
+      setSmtpPass('');
+      setEmailSuccess('Configuración de correo automático guardada correctamente.');
       setTimeout(() => setEmailSuccess(null), 4500);
     } catch (err: unknown) {
       setEmailError(
@@ -128,15 +135,23 @@ export function PortalSettingsPanel({
     setEmailError(null);
     setEmailSuccess(null);
     try {
-      const res = await authFetch('/api/crm/email-settings/test', {
-        method: 'POST',
-        body: JSON.stringify({ recipientEmail: testRecipient.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Falló el envío del correo de prueba.');
+      const res = await tryBackendJson<{ message?: string }>(
+        '/api/crm/email-settings/test',
+        {
+          method: 'POST',
+          body: JSON.stringify({ recipientEmail: testRecipient.trim() }),
+        },
+        authFetch
+      );
+      if (!res.backendAvailable) {
+        throw new Error(
+          'El envío de correo SMTP requiere servidor Express conectado (VITE_API_ORIGIN).'
+        );
       }
-      setEmailSuccess(data.message || 'Correo de prueba enviado correctamente.');
+      if (!res.ok) {
+        throw new Error(res.error || 'Falló el envío del correo de prueba.');
+      }
+      setEmailSuccess(res.data?.message || 'Correo de prueba enviado correctamente.');
     } catch (err: unknown) {
       setEmailError(
         err instanceof Error ? err.message : 'No se pudo despachar el correo de prueba.'
