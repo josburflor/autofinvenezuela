@@ -1,6 +1,6 @@
 {
   "name": "Autofin Venezuela CRM",
-  "description": "Sistema CRM y portal de captación de leads para financiamiento de vehículos e inmuebles de Autofin Venezuela, con calculadora de planes, gestión de citas e integración de voz y chat con Gemini.",
-  "requestFramePermissions": ["microphone"],
+  "description": "Sistema CRM y portal de captación de leads para financiamiento de vehículos, motos e inmuebles de Autofin Venezuela, con calculadora de planes y gestión de citas.",
+  "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

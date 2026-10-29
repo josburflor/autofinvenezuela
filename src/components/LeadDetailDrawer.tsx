@@ -781,7 +781,7 @@ export function LeadDetailDrawer({
                         activityType === 'llamada'
                           ? 'Ej. Llamada de revisión de inicial'
                           : activityType === 'cita_presencial'
-                            ? 'Ej. Cita en oficina Caracas'
+                            ? 'Ej. Cita en CC Salvamall, Valencia'
                             : 'Ej. Resumen de conversación'
                       }
                       className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-600"

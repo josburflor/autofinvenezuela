@@ -21,7 +21,6 @@ import {
   Printer,
   RefreshCw,
   Search,
-  Sparkles,
   Trash2,
   UserCheck,
   X,
@@ -31,7 +30,6 @@ import { apiFetch, websocketUrl } from './lib/api-url';
 import { PublicLeadForm } from './components/PublicLeadForm';
 import { FinancingCalculator } from './components/FinancingCalculator';
 import { LeadDetailDrawer } from './components/LeadDetailDrawer';
-import { GeminiAdvisorPanel } from './components/GeminiAdvisorPanel';
 import { DatabaseSchemaView } from './components/DatabaseSchemaView';
 import { AdminManagementPanel } from './components/AdminManagementPanel';
 import { AdvisorProfileEditor } from './components/AdvisorProfileEditor';
@@ -173,7 +171,6 @@ function AutofinWorkspace() {
   // Ficha seleccionada, confirmación de eliminación y paneles del asesor
   const [selectedLeadId, setSelectedLeadId] = useState<number | null>(null);
   const [leadPendingDelete, setLeadPendingDelete] = useState<LeadRecordDTO | null>(null);
-  const [assistantOpen, setAssistantOpen] = useState(false);
   const [showNewLeadModal, setShowNewLeadModal] = useState(false);
   const [showAdvisorPhotoModal, setShowAdvisorPhotoModal] = useState(false);
   const [showAdminCalcConfigModal, setShowAdminCalcConfigModal] = useState(false);
@@ -232,7 +229,6 @@ function AutofinWorkspace() {
   const handleFullSignOut = useCallback(async () => {
     setSelectedLeadId(null);
     setLeadPendingDelete(null);
-    setAssistantOpen(false);
     setShowNewLeadModal(false);
     setShowAdvisorPhotoModal(false);
     setShowAdminCalcConfigModal(false);
@@ -817,13 +813,6 @@ function AutofinWorkspace() {
             >
               Calculadora
             </button>
-            <button
-              type="button"
-              onClick={() => setAssistantOpen(true)}
-              className="py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 border-transparent hover:text-slate-900 hover:border-slate-300"
-            >
-              Asistente de IA
-            </button>
           </nav>
         ) : (
           <nav className="flex items-center gap-6 text-sm font-medium text-slate-600 overflow-x-auto">
@@ -934,7 +923,6 @@ function AutofinWorkspace() {
                   triggerNewWebLeadAlert(createdLead);
                 }
               }}
-              onOpenAssistant={() => setAssistantOpen(true)}
               onScrollToCalculator={scrollToEmbeddedCalculator}
             />
 
@@ -1382,15 +1370,6 @@ function AutofinWorkspace() {
                         <span>Claves de Admin</span>
                       </button>
                     )}
-
-                    <button
-                      type="button"
-                      onClick={() => setAssistantOpen(true)}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-sky-700 rounded-lg hover:bg-sky-800 transition-colors whitespace-nowrap shrink-0"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Asistente IA</span>
-                    </button>
 
                     <button
                       type="button"
@@ -1880,16 +1859,6 @@ function AutofinWorkspace() {
         onOpenLead={handleOpenLeadFromNotification}
         onDismiss={dismissAlert}
         onComplete={markAlertCompleted}
-      />
-
-      {/* Asistente de IA (Modo Cliente en Inicio Público / Modo Asesor en Panel Administrativo) */}
-      <GeminiAdvisorPanel
-        open={assistantOpen}
-        onClose={() => setAssistantOpen(false)}
-        activeLead={isPublicPortalView ? null : selectedLead}
-        isAdvisorMode={Boolean(user && !isPublicPortalView)}
-        advisorProfile={advisorProfile}
-        authFetch={authFetch}
       />
 
       {/* Footer sobrio e institucional (oculto al imprimir reportes) */}

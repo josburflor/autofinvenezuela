@@ -9,7 +9,6 @@ import {
   MailCheck,
   MapPin,
   ShieldCheck,
-  Sparkles,
   UserCheck,
 } from 'lucide-react';
 import heroVehiculoImg from '../assets/images/autofin_hero_vehiculo_1793257817332.jpg';
@@ -31,7 +30,6 @@ interface PublicLeadFormProps {
   prefillAmount?: number | null;
   advisorProfile?: AdvisorProfileDTO;
   onLeadSubmitted?: (lead: LeadRecordDTO) => void;
-  onOpenAssistant?: () => void;
   onScrollToCalculator?: () => void;
 }
 
@@ -63,7 +61,6 @@ export function PublicLeadForm({
   prefillAmount = null,
   advisorProfile,
   onLeadSubmitted,
-  onOpenAssistant,
   onScrollToCalculator,
 }: PublicLeadFormProps) {
   const displayAdvisorName = advisorProfile?.advisorName || 'Jesús Artahona';
@@ -346,28 +343,16 @@ export function PublicLeadForm({
                 </div>
               </div>
 
-              {(onScrollToCalculator || onOpenAssistant) && (
+              {onScrollToCalculator && (
                 <div className="flex flex-wrap items-center gap-2.5 pt-2">
-                  {onScrollToCalculator && (
-                    <button
-                      type="button"
-                      onClick={onScrollToCalculator}
-                      className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-slate-900 bg-white rounded-lg hover:bg-slate-100 transition-colors whitespace-nowrap shrink-0"
-                    >
-                      <Calculator className="w-3.5 h-3.5 text-sky-700" />
-                      <span>Ver Calculadora Abajo</span>
-                    </button>
-                  )}
-                  {onOpenAssistant && (
-                    <button
-                      type="button"
-                      onClick={onOpenAssistant}
-                      className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-white bg-sky-700 rounded-lg hover:bg-sky-600 transition-colors whitespace-nowrap shrink-0"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Consultar al Asistente de IA</span>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={onScrollToCalculator}
+                    className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-slate-900 bg-white rounded-lg hover:bg-slate-100 transition-colors whitespace-nowrap shrink-0"
+                  >
+                    <Calculator className="w-3.5 h-3.5 text-sky-700" />
+                    <span>Ver Calculadora Abajo</span>
+                  </button>
                 </div>
               )}
             </div>
