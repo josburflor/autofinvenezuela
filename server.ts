@@ -5,7 +5,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import { GoogleGenAI, Modality } from '@google/genai';
 import type { LiveServerMessage } from '@google/genai';
 
@@ -14,6 +14,7 @@ import type { AuthRequest } from './src/middleware/auth.ts';
 import {
   issueAdminSessionToken,
   revokeAdminSessionToken,
+  verifyAdminSessionToken,
 } from './src/lib/admin-auth.ts';
 import {
   DEFAULT_ADVISOR_PROFILE,
@@ -96,10 +97,16 @@ async function startServer() {
   const app = express();
   const httpServer = http.createServer(app);
   const crmEventsWss = new WebSocketServer({ noServer: true });
+  const authenticatedCrmClients = new Set<WebSocket>();
+  const allowedFrontendOrigins = new Set([
+    'https://ai-studio-applet-webapp-5d2a7.web.app',
+    'https://ai-studio-applet-webapp-5d2a7.firebaseapp.com',
+    ...((process.env.ALLOWED_FRONTEND_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean)),
+  ]);
 
   const broadcastCrmEvent = (payload: Record<string, unknown>) => {
     const serialized = JSON.stringify(payload);
-    crmEventsWss.clients.forEach((client) => {
+    authenticatedCrmClients.forEach((client) => {
       if (client.readyState === client.OPEN) {
         try {
           client.send(serialized);
@@ -110,6 +117,20 @@ async function startServer() {
     });
   };
 
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && allowedFrontendOrigins.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    }
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
   app.use(express.json({ limit: '10mb' }));
 
   // ============================================================================
@@ -911,6 +932,17 @@ Orienta al cliente con amabilidad, calcula ejemplos claros a 60 cuotas si te ind
 
   httpServer.on('upgrade', (request, socket, head) => {
     const reqUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+    const origin = request.headers.origin;
+    let sameOrigin = false;
+    try {
+      sameOrigin = Boolean(origin && new URL(origin).host === request.headers.host);
+    } catch {
+      sameOrigin = false;
+    }
+    if (origin && !allowedFrontendOrigins.has(origin) && !sameOrigin) {
+      socket.destroy();
+      return;
+    }
     if (reqUrl.pathname === '/live') {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request);
@@ -920,6 +952,31 @@ Orienta al cliente con amabilidad, calcula ejemplos claros a 60 cuotas si te ind
         crmEventsWss.emit('connection', ws, request);
       });
     }
+  });
+
+  crmEventsWss.on('connection', (clientWs) => {
+    const authTimeout = setTimeout(() => clientWs.close(1008, 'Autenticación requerida'), 5000);
+    clientWs.once('message', async (raw) => {
+      clearTimeout(authTimeout);
+      try {
+        const message = JSON.parse(raw.toString()) as { type?: string; token?: string };
+        const claims = message.type === 'AUTH' && message.token
+          ? verifyAdminSessionToken(message.token)
+          : null;
+        const user = claims ? await getUserByUid(claims.uid) : null;
+        if (!user?.isActive) {
+          clientWs.close(1008, 'No autorizado');
+          return;
+        }
+        authenticatedCrmClients.add(clientWs);
+      } catch {
+        clientWs.close(1008, 'No autorizado');
+      }
+    });
+    clientWs.on('close', () => {
+      clearTimeout(authTimeout);
+      authenticatedCrmClients.delete(clientWs);
+    });
   });
 
   wss.on('connection', (clientWs, request) => {

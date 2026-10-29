@@ -1,0 +1,8 @@
+{
+  "hosting": {
+    "site": "ai-studio-applet-webapp-5d2a7",
+    "public": "dist",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [{ "source": "**", "destination": "/index.html" }]
+  }
+}

@@ -27,6 +27,7 @@ import {
   X,
 } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { apiFetch, websocketUrl } from './lib/api-url';
 import { PublicLeadForm } from './components/PublicLeadForm';
 import { FinancingCalculator } from './components/FinancingCalculator';
 import { LeadDetailDrawer } from './components/LeadDetailDrawer';
@@ -138,6 +139,7 @@ function AutofinWorkspace() {
     signInWithCredentials,
     signOutAdvisor,
     authFetch,
+    getAdminToken,
   } = useAuth();
 
   // Inicio por defecto en Captación Web para los clientes visitantes
@@ -258,8 +260,8 @@ function AutofinWorkspace() {
   const fetchPublicSettings = useCallback(async () => {
     try {
       const [calcRes, profileRes] = await Promise.all([
-        fetch('/api/public/calculator-settings'),
-        fetch('/api/public/advisor-profile'),
+        apiFetch('/api/public/calculator-settings'),
+        apiFetch('/api/public/advisor-profile'),
       ]);
       if (calcRes.ok) {
         const calcData = (await calcRes.json()) as CalculatorSettingsDTO;
@@ -347,8 +349,12 @@ function AutofinWorkspace() {
 
     const connectWs = () => {
       if (disposed) return;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${protocol}//${window.location.host}/ws/crm-events`);
+      ws = new WebSocket(websocketUrl('/ws/crm-events'));
+      ws.onopen = () => {
+        const token = getAdminToken();
+        if (token) ws?.send(JSON.stringify({ type: 'AUTH', token }));
+        else ws?.close();
+      };
 
       ws.onmessage = (event) => {
         try {
@@ -403,7 +409,7 @@ function AutofinWorkspace() {
         }
       }
     };
-  }, [user, triggerNewWebLeadAlert]);
+  }, [user, getAdminToken, triggerNewWebLeadAlert]);
 
   const selectedLead = useMemo(
     () => leads.find((l) => l.id === selectedLeadId) || null,
