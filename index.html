@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      (function () {
+        function patchReadonlyFetch(target) {
+          if (!target) return;
+          try {
+            var desc = Object.getOwnPropertyDescriptor(target, 'fetch');
+            if (desc && typeof desc.get === 'function' && !desc.set && desc.configurable) {
+              Object.defineProperty(target, 'fetch', {
+                configurable: true,
+                enumerable: desc.enumerable !== false,
+                get: desc.get,
+                set: function () {},
+              });
+            }
+          } catch (_err) {}
+        }
+
+        patchReadonlyFetch(window);
+        if (typeof Window !== 'undefined' && Window.prototype) {
+          patchReadonlyFetch(Window.prototype);
+        }
+
+        function isExtensionFetchConflict(message, filename, stack) {
+          var src = String(filename || '') + ' ' + String(stack || '');
+          var msg = String(message || '');
+          return (
+            src.indexOf('chrome-extension://') !== -1 ||
+            src.indexOf('moz-extension://') !== -1 ||
+            src.indexOf('safari-extension://') !== -1 ||
+            msg.indexOf('Cannot set property fetch of #<Window>') !== -1
+          );
+        }
+
+        window.addEventListener(
+          'error',
+          function (event) {
+            var errStack = event && event.error && event.error.stack ? event.error.stack : '';
+            if (isExtensionFetchConflict(event && event.message, event && event.filename, errStack)) {
+              event.stopImmediatePropagation();
+              event.preventDefault();
+            }
+          },
+          true
+        );
+
+        window.addEventListener(
+          'unhandledrejection',
+          function (event) {
+            var reason = event && event.reason;
+            var msg = reason && reason.message ? reason.message : String(reason || '');
+            var stack = reason && reason.stack ? reason.stack : '';
+            if (isExtensionFetchConflict(msg, '', stack)) {
+              event.stopImmediatePropagation();
+              event.preventDefault();
+            }
+          },
+          true
+        );
+
+        if (typeof queueMicrotask === 'function') {
+          queueMicrotask(function () {
+            patchReadonlyFetch(window);
+          });
+        }
+        document.addEventListener(
+          'readystatechange',
+          function () {
+            patchReadonlyFetch(window);
+          },
+          { passive: true }
+        );
+      })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Autofin Venezuela CRM — Gestión de Financiamiento Automotriz e Inmobiliario</title>
+    <meta
+      name="description"
+      content="Sistema CRM y portal de captación de leads para financiamiento de vehículos e inmuebles de Autofin Venezuela, con calculadora de planes, gestión de citas e integración de voz y chat con Gemini."
+    />
+    <meta property="og:title" content="Autofin Venezuela CRM" />
+    <meta
+      property="og:description"
+      content="Sistema CRM y portal de captación de leads para financiamiento de vehículos e inmuebles de Autofin Venezuela."
+    />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="bg-slate-50 text-slate-900 antialiased selection:bg-sky-700 selection:text-white">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
